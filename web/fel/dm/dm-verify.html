@@ -1,0 +1,7 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>ST 2094-10 style DM check</title>
+<style>body{font:13px/1.4 system-ui;margin:16px;background:#0b0c0e;color:#e8e9ec}pre{white-space:pre-wrap;font:12px ui-monospace,Menlo,monospace}</style></head>
+<body><h3>ST 2094-10 style display management: WGSL against the f64 reference, real frames, chart</h3>
+<p>Run <code>node dm-node-ref.mjs</code> first (writes <code>dm-samples.json</code>). Query: <code>?auto=1&amp;parts=gpu,frames,chart&amp;snaps=1&amp;clips=rangers,awaken,p5&amp;which=1,4&amp;name=x</code>. Results are posted to <code>/results</code>; snapshots as <code>dm-snap</code> records (<code>save-snaps.py</code> writes them to <code>web/results</code>).</p>
+<pre id="out"></pre>
+<script type="module" src="dm-verify.mjs"></script></body></html>

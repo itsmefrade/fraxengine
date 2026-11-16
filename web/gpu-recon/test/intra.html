@@ -1,0 +1,162 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>GPU intra test</title>
+<style>body { font: 13px ui-monospace, monospace; margin: 16px; white-space: pre-wrap; }</style>
+</head>
+<body>
+<div id="log"></div>
+<script type="module">
+// Headless check of intra.wgsl.mjs against the rust_h265 reference vectors from rust/gpu-recon-ref-intra.
+// Query: ?cases=name1,name2 (files in data-intra/), &modes=list,ctu,wave, &reps=N (timed runs per mode), &rounds=K
+// ('list' rounds per dispatch), &patch=[[from,to],...] (shader string replacements), &badsched=1 (negative control).
+// Result: window.intraResult (also printed). Every sample of every plane is compared bit for bit.
+import { IntraStage, analyze, buildSchedule, pictureLayout, fromStreamIntra } from '../intra.mjs';
+import { intraWgsl } from '../intra.wgsl.mjs';
+
+const q = new URLSearchParams(location.search);
+const cases = (q.get('cases') || 't1').split(',');
+const modes = (q.get('modes') || 'list,ctu,wave').split(',');
+const rounds = Number(q.get('rounds') || 0) || undefined; // 'list' rounds per dispatch (default LIST_ROUNDS)
+const reps = Number(q.get('reps') || 3);
+const logEl = document.getElementById('log');
+const log = s => { logEl.textContent += s + '\n'; console.log(s); };
+
+async function bin(name, Type) {
+  const r = await fetch(`data-intra/${name}`);
+  if (!r.ok) throw new Error(`${name}: ${r.status}`);
+  return new Type(await r.arrayBuffer());
+}
+
+async function run() {
+  const adapter = await navigator.gpu.requestAdapter();
+  const hasTs = adapter.features.has('timestamp-query');
+  // The adapter's compute limits (Apple: 1024 invocations, 32 KB workgroup memory) for the &patch experiments.
+  const lim = ['maxComputeInvocationsPerWorkgroup', 'maxComputeWorkgroupSizeX', 'maxComputeWorkgroupStorageSize'];
+  const device = await adapter.requestDevice({ requiredFeatures: hasTs ? ['timestamp-query'] : [],
+    requiredLimits: Object.fromEntries(lim.map(k => [k, adapter.limits[k]])) });
+  let gpuError = null;
+  device.onuncapturederror = e => { gpuError = String(e.error.message); };
+  // &patch=<json [[from, to], ...]>: string replacements on the shader (negative controls and timing experiments).
+  let code = intraWgsl;
+  for (const [a, b] of JSON.parse(q.get('patch') || '[]')) {
+    if (!code.includes(a)) throw new Error(`patch target not found: ${a}`);
+    code = code.split(a).join(b);
+  }
+  const stage = new IntraStage(device, { code });
+  const info = await stage.module.getCompilationInfo();
+  for (const m of info.messages) log(`wgsl ${m.type}: ${m.message} @${m.lineNum}:${m.linePos}`);
+  const out = { cases: [], totalSamples: 0, totalMismatches: 0, totalIntraSamples: 0 };
+  for (const name of cases) {
+    const meta = await (await fetch(`data-intra/${name}.json`)).json();
+    const [init, expect, res, imap] = await Promise.all([
+      bin(`${name}.init.bin`, Uint32Array), bin(`${name}.expect.bin`, Uint32Array),
+      bin(`${name}.res.bin`, Int32Array), bin(`${name}.imap.bin`, Uint32Array)]);
+    // Cases cut from G0's reconstruction stream (rust/gpu-recon-ref-intra from_dump) carry the stream's own intra and
+    // TU sections: the conversion is under test, and word 3 then holds G0's wave, which analyze() must reproduce.
+    const tus = meta.source === 'stream'
+      ? fromStreamIntra(await bin(`${name}.sintra.bin`, Uint32Array), await bin(`${name}.stus.bin`, Uint32Array))
+      : await bin(`${name}.tus.bin`, Uint32Array);
+    const L = pictureLayout(meta.width, meta.height);
+    if (L.words !== init.length) throw new Error(`layout ${L.words} != ${init.length}`);
+    let t0 = performance.now();
+    const an = analyze(tus, meta.width, meta.height, meta.log2Ctb, rounds);
+    const analyzeMs = performance.now() - t0;
+    let waveMismatch = 0;
+    for (let t = 0; t < tus.length / 4; t++) if (an.wave[t] !== tus[t * 4 + 3]) waveMismatch++;
+    const mk = (data, usage) => {
+      const b = device.createBuffer({ size: Math.max(16, data.byteLength), usage: usage | GPUBufferUsage.COPY_DST });
+      device.queue.writeBuffer(b, 0, data);
+      return b;
+    };
+    const picture = device.createBuffer({ size: init.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST });
+    const initBuf = mk(init, GPUBufferUsage.COPY_SRC);
+    const residual = mk(res, GPUBufferUsage.STORAGE);
+    const intraMap = mk(imap, GPUBufferUsage.STORAGE);
+    const readback = device.createBuffer({ size: init.byteLength, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
+    const qs = hasTs ? device.createQuerySet({ type: 'timestamp', count: 2 }) : null;
+    const qRes = device.createBuffer({ size: 16, usage: GPUBufferUsage.QUERY_RESOLVE | GPUBufferUsage.COPY_SRC });
+    const qRead = device.createBuffer({ size: 16, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
+    const pic = { width: meta.width, height: meta.height, bitDepthY: meta.bitDepth, bitDepthC: meta.bitDepth,
+      strongIntraSmoothing: meta.strongIntraSmoothing, intraSmoothingDisabled: meta.intraSmoothingDisabled };
+    for (const mode of modes) {
+      t0 = performance.now();
+      // &badsched=1 (negative control): every TU in dispatch 0, round 0, i.e. no dependency order at all.
+      const anUse = q.get('badsched') ? { ...an, disp: new Uint32Array(an.disp.length), round: new Uint32Array(an.round.length), maxDisp: 0 } : an;
+      const sch = buildSchedule(tus, meta.width, meta.height, meta.log2Ctb, mode, anUse);
+      const schedMs = performance.now() - t0;
+      stage.prepare(pic, sch, { picture, residual, intraMap });
+      const times = [];
+      let wallMs = 0;
+      for (let r = 0; r < reps; r++) {
+        const enc = device.createCommandEncoder();
+        enc.copyBufferToBuffer(initBuf, 0, picture, 0, init.byteLength);
+        const pass = enc.beginComputePass(qs ? { timestampWrites: { querySet: qs, beginningOfPassWriteIndex: 0, endOfPassWriteIndex: 1 } } : {});
+        stage.encode(pass);
+        pass.end();
+        if (qs) { enc.resolveQuerySet(qs, 0, 2, qRes, 0); enc.copyBufferToBuffer(qRes, 0, qRead, 0, 16); }
+        if (r === reps - 1) enc.copyBufferToBuffer(picture, 0, readback, 0, init.byteLength);
+        const w0 = performance.now();
+        device.queue.submit([enc.finish()]);
+        await device.queue.onSubmittedWorkDone();
+        wallMs = performance.now() - w0;
+        if (qs) {
+          await qRead.mapAsync(GPUMapMode.READ);
+          const ts = new BigUint64Array(qRead.getMappedRange());
+          times.push(Number(ts[1] - ts[0]) / 1e6);
+          qRead.unmap();
+        }
+      }
+      await readback.mapAsync(GPUMapMode.READ);
+      const got = new Uint32Array(readback.getMappedRange().slice(0));
+      readback.unmap();
+      // Compare every sample of the three planes (padding columns excluded).
+      const planes = [[0, L.strideY, meta.width, meta.height], [L.offCb, L.strideC, meta.width >> 1, meta.height >> 1], [L.offCr, L.strideC, meta.width >> 1, meta.height >> 1]];
+      let samples = 0, mism = 0;
+      const first = [];
+      planes.forEach(([base, stride, w, h], c) => {
+        for (let y = 0; y < h; y++) {
+          for (let x = 0; x < w; x += 2) {
+            const i = base + ((y * stride + x) >> 1);
+            samples += 2;
+            if (got[i] !== expect[i]) {
+              for (let k = 0; k < 2; k++) {
+                const gv = (got[i] >>> (16 * k)) & 0xffff, ev = (expect[i] >>> (16 * k)) & 0xffff;
+                if (gv !== ev) {
+                  mism++;
+                  if (first.length < 8) {
+                    let tu = -1;
+                    for (let t = 0; t < tus.length / 4; t++) {
+                      const xy = tus[t * 4], inf = tus[t * 4 + 1], s = 1 << (inf & 7);
+                      const tx = xy & 0xffff, ty = xy >>> 16;
+                      if (((inf >> 3) & 3) === c && x + k >= tx && x + k < tx + s && y >= ty && y < ty + s) { tu = t; break; }
+                    }
+                    const inf = tu >= 0 ? tus[tu * 4 + 1] : 0;
+                    first.push({ c, x: x + k, y, got: gv, exp: ev, tu, tuXY: tu >= 0 ? [tus[tu * 4] & 0xffff, tus[tu * 4] >>> 16] : null,
+                      log2: inf & 7, mode: (inf >> 5) & 63, avail: (inf >> 11) & 31, flags: (inf >> 16) & 3, res: tu >= 0 ? tus[tu * 4 + 2] : null });
+                  }
+                }
+              }
+            }
+          }
+        }
+      });
+      times.sort((p, q2) => p - q2);
+      const rec = { name, mode, width: meta.width, height: meta.height, bitDepth: meta.bitDepth, log2Ctb: meta.log2Ctb, cip: meta.cip,
+        intraFraction: meta.intraFraction, tus: tus.length / 4, intraSamples: meta.intraSamples, samples, mismatches: mism,
+        waveMismatch, ...sch.stats, gpuMsMedian: times.length ? times[times.length >> 1] : null, gpuMsMin: times[0] ?? null,
+        lastWallMs: +wallMs.toFixed(2), analyzeMs: +analyzeMs.toFixed(2), scheduleMs: +schedMs.toFixed(2), first, gpuError };
+      out.cases.push(rec);
+      out.totalSamples += samples; out.totalMismatches += mism; out.totalIntraSamples += meta.intraSamples;
+      log(JSON.stringify(rec));
+    }
+    for (const b of [picture, initBuf, residual, intraMap, readback]) b.destroy();
+  }
+  log(`TOTAL samples ${out.totalSamples} mismatches ${out.totalMismatches}`);
+  window.intraResult = out;
+}
+run().catch(e => { log('ERROR ' + e.stack); window.intraResult = { error: String(e.stack) }; });
+</script>
+</body>
+</html>

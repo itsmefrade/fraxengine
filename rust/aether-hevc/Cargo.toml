@@ -1,0 +1,35 @@
+[workspace]
+
+[package]
+name = "aether-hevc"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+license = "MIT OR Apache-2.0"
+publish = false
+description = "Bit-exact HEVC Main/Main10 session decoder for WASM workers, optimized fork of rust_h265 f582ce89"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+rust_h265 = { path = "vendor/rust_h265" }
+
+[features]
+scalar = ["rust_h265/scalar"]
+legacy_residual = ["rust_h265/legacy_residual"]
+# One decoder on several host workers sharing one memory (build-wasm.sh --threads).
+threads = ["rust_h265/wasm-threads"]
+# Reconstruction command stream (GPU reconstruction): recorder + CPU replay, tools in src/bin/reconstream/.
+recon-stream = ["rust_h265/recon-stream"]
+
+[[bin]]
+name = "reconstream"
+required-features = ["recon-stream"]
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+debug = 1

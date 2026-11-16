@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GPU bS test</title>
+<style>
+  :root { --bg: #fff; --fg: #111; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #111; --fg: #ddd; } }
+  body { background: var(--bg); color: var(--fg); font: 13px ui-monospace, monospace; margin: 16px; }
+  pre { white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<pre id="log">running...</pre>
+<script type="module">
+// Boundary strengths of bs.wgsl.mjs against the decoder's own, on real pictures. Input: `reconstream dump` dirs
+// (FORMAT-STREAM.md version 2): every picture's edge-code block map, PU and TU records go through the kernel, and
+// the block map it returns is compared word for word with picNNN.bs.u32, the decoder's strengths packed by the same
+// block map layout (FORMAT-deblock.md). Negative controls on each inter picture (payload edits that must change
+// strengths): mvx moved by 4 quarter samples on every other PU, cbf ignored (TU records moved to plane 1), reference slots changed on every other PU.
+// Query: data=<base URL of the dumps>, streams=a,b, reps=N (GPU timing runs), neg=0|1. Result in window.result.
+import { streamEvents, parsePicture, SEC, EV } from '../recon.mjs';
+import { createBs, makeBsParams, cellsBytes } from '../bs.mjs';
+
+const q = new URLSearchParams(location.search);
+const DATA = q.get('data') ?? 'http://127.0.0.1:8795/';
+const STREAMS = (q.get('streams') ?? 'fel-p7-bl,p5,awaken,rangers-bl').split(',').filter(Boolean);
+const REPS = Number(q.get('reps') ?? 20);
+const NEG = q.get('neg') !== '0';
+const logEl = document.getElementById('log');
+const lines = [];
+const log = (s) => { lines.push(s); logEl.textContent = lines.join('\n'); console.log(s); };
+const U = GPUBufferUsage;
+
+function upload(device, words, usage = U.STORAGE) {
+  const b = device.createBuffer({ size: Math.max(16, words.byteLength), usage: usage | U.COPY_DST | U.COPY_SRC });
+  if (words.length) device.queue.writeBuffer(b, 0, words);
+  return b;
+}
+
+async function readBack(device, buf, bytes) {
+  const rb = device.createBuffer({ size: bytes, usage: U.MAP_READ | U.COPY_DST });
+  const enc = device.createCommandEncoder();
+  enc.copyBufferToBuffer(buf, 0, rb, 0, bytes);
+  device.queue.submit([enc.finish()]);
+  await rb.mapAsync(GPUMapMode.READ);
+  const out = new Uint32Array(rb.getMappedRange().slice(0));
+  rb.unmap();
+  rb.destroy();
+  return out;
+}
+
+// Runs the kernel on one picture; returns the resolved block map (and GPU ms when timing).
+async function runBs(device, bs, pic, { pus, tus, map }, reps = 0) {
+  const dims = { width: pic.width, height: pic.height, nPu: pus.length / 6, nTu: tus.length / 6 };
+  const params = upload(device, makeBsParams(dims), U.UNIFORM);
+  const cells = device.createBuffer({ size: cellsBytes(pic.width, pic.height), usage: U.STORAGE | U.COPY_DST });
+  const puB = upload(device, pus), tuB = upload(device, tus), mapB = upload(device, map);
+  const bg = bs.bindGroup({ params, cells, pus: puB, tus: tuB, map: mapB });
+  const run = () => {
+    const enc = device.createCommandEncoder();
+    bs.clear(enc, cells, pic.width, pic.height, dims.nPu);
+    const pass = enc.beginComputePass();
+    bs.encode(pass, bg, dims);
+    pass.end();
+    return enc;
+  };
+  device.queue.submit([run().finish()]);
+  const got = await readBack(device, mapB, map.byteLength);
+  let gpuMs = null;
+  if (reps) {
+    // reps passes in one submit, clear included (the map then holds strengths, which the kernel reads as codes
+    // again: timing only).
+    await device.queue.onSubmittedWorkDone();
+    const t = performance.now();
+    const encs = [];
+    for (let i = 0; i < reps; i++) encs.push(run().finish());
+    device.queue.submit(encs);
+    await device.queue.onSubmittedWorkDone();
+    gpuMs = (performance.now() - t) / reps;
+  }
+  [params, cells, puB, tuB, mapB].forEach((b) => b.destroy());
+  return { got, gpuMs };
+}
+
+function diff(got, exp) {
+  let mism = 0, bsWords = 0;
+  const first = [];
+  for (let i = 0; i < exp.length; i++) {
+    if (exp[i] & 0xff) bsWords++;
+    if (got[i] !== exp[i]) { mism++; if (first.length < 5) first.push({ i, got: got[i].toString(16), exp: exp[i].toString(16) }); }
+  }
+  return { mism, bsWords, first };
+}
+
+function histogram(map) {
+  const h = [0, 0, 0, 0];
+  for (const m of map) for (let k = 0; k < 4; k++) h[(m >>> (2 * k)) & 3]++;
+  return h;
+}
+
+async function runStream(device, bs, name) {
+  const r = await fetch(`${DATA}${name}/stream.rcs`);
+  if (!r.ok) throw new Error(`${name}: ${r.status}`);
+  const words = new Uint32Array(await r.arrayBuffer());
+  const out = [];
+  for (const ev of streamEvents(words)) {
+    if (ev.type !== EV.PICTURE) continue;
+    const pic = parsePicture(ev.payload);
+    const id = String(pic.picId).padStart(3, '0');
+    const er = await fetch(`${DATA}${name}/pic${id}.bs.u32`);
+    if (!er.ok) continue;
+    const exp = new Uint32Array(await er.arrayBuffer());
+    const S = pic.secs;
+    const rec = {
+      pus: S[SEC.PU].words.slice(0, S[SEC.PU].count * 6),
+      tus: S[SEC.TU].words.slice(0, S[SEC.TU].count * 6),
+      map: S[SEC.BLOCK_MAP].words.slice(0, S[SEC.BLOCK_MAP].count),
+    };
+    if (!pic.edgeCodes) throw new Error(`${name} pic ${pic.picId}: no edge codes (version 1 dump)`);
+    const codes = histogram(rec.map);
+    const { got, gpuMs } = await runBs(device, bs, pic, rec, REPS);
+    const d = diff(got, exp);
+    const res = { picId: pic.picId, pus: rec.pus.length / 6, tus: rec.tus.length / 6, blocks: exp.length, codes, bs: histogram(exp), mismatches: d.mism, first: d.first, gpuMs: gpuMs && Math.round(gpuMs * 1000) / 1000 };
+    if (NEG && res.pus) {
+      // Each edit must change some strengths in every stream (summed over its inter pictures; a static picture
+      // with zero motion and no residual is insensitive to all three), or the comparison would not see that input.
+      const neg = {};
+      const edits = {
+        shiftMvs: (x) => { for (let i = 0; i < x.pus.length; i += 12) { x.pus[i + 3] = (x.pus[i + 3] + 4) >>> 0; x.pus[i + 4] = (x.pus[i + 4] + 4) >>> 0; } }, // mvx + 4, every other PU
+        noCbf: (x) => { for (let i = 0; i < x.tus.length; i += 6) x.tus[i + 1] |= 4; },
+        otherSlots: (x) => { for (let i = 0; i < x.pus.length; i += 12) x.pus[i + 2] = (x.pus[i + 2] ^ 0x10001) >>> 0; }, // every other PU
+      };
+      for (const [k, f] of Object.entries(edits)) {
+        const x = { pus: rec.pus.slice(), tus: rec.tus.slice(), map: rec.map.slice() };
+        f(x);
+        neg[k] = diff((await runBs(device, bs, pic, x)).got, exp).mism;
+      }
+      res.negative = neg;
+    }
+    log(`${name} pic ${pic.picId}: ${res.pus} PUs, ${res.tus} TUs, codes ${codes}, bS ${res.bs}: ${d.mism} / ${exp.length} words differ` + (res.negative ? ` negative ${JSON.stringify(res.negative)}` : '') + (gpuMs ? ` gpu ${res.gpuMs} ms` : ''));
+    out.push(res);
+  }
+  return out;
+}
+
+const result = { done: false };
+window.result = result;
+try {
+  const adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
+  const device = await adapter.requestDevice();
+  device.addEventListener('uncapturederror', (e) => log('GPU error: ' + e.error.message));
+  const bs = createBs(device);
+  result.streams = {};
+  for (const s of STREAMS) result.streams[s] = await runStream(device, bs, s);
+  const all = Object.values(result.streams).flat();
+  result.pictures = all.length;
+  result.words = all.reduce((a, p) => a + p.blocks, 0);
+  result.mismatches = all.reduce((a, p) => a + p.mismatches, 0);
+  result.negative = Object.fromEntries(Object.entries(result.streams).map(([s, pics]) => {
+    const sum = {};
+    for (const p of pics) for (const [k, v] of Object.entries(p.negative ?? {})) sum[k] = (sum[k] ?? 0) + v;
+    return [s, sum];
+  }));
+  result.negativeAllFail = Object.values(result.negative).every((sum) => Object.keys(sum).length === 3 && Object.values(sum).every((v) => v > 0));
+  log(`negative controls (differing words per stream): ${JSON.stringify(result.negative)}`);
+  result.ok = result.pictures > 0 && result.mismatches === 0 && result.negativeAllFail;
+  log(`TOTAL ${result.pictures} pictures, ${result.words} block map words, ${result.mismatches} differ; negative controls all fail: ${result.negativeAllFail}; ok=${result.ok}`);
+} catch (e) {
+  result.error = String(e.stack ?? e);
+  log('ERROR ' + result.error);
+}
+result.done = true;
+</script>
+</body>
+</html>

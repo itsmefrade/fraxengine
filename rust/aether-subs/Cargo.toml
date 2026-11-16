@@ -1,0 +1,12 @@
+[package]
+name = "aether-subs"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+license = "LGPL-3.0-only"
+description = "Subtitle decoding for the browser port: PGS bitmaps and SRT, WebVTT, ASS/SSA text converted to one styled-cue model"
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]

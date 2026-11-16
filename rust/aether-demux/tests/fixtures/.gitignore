@@ -1,0 +1,6 @@
+*
+!.gitignore
+!generate.sh
+!generate-ts.sh
+!generate-mkv.sh
+!generate-lazy.sh

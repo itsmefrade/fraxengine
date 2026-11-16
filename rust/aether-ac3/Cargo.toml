@@ -1,0 +1,37 @@
+[package]
+name = "aether-ac3"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+description = "Pure Rust AC-3 and E-AC-3 (Dolby Digital / Dolby Digital Plus) audio decoder, wasm32-unknown-unknown friendly"
+license = "LGPL-2.1-or-later"
+publish = false
+keywords = ["audio", "ac3", "eac3", "dolby", "decoder"]
+categories = ["multimedia::audio", "wasm"]
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+
+[dev-dependencies]
+
+[[test]]
+name = "conformance"
+path = "tests/conformance.rs"
+
+[[example]]
+name = "compare"
+path = "examples/compare.rs"
+
+[[example]]
+name = "dump"
+path = "examples/dump.rs"
+
+[[example]]
+name = "stats"
+path = "examples/stats.rs"
+
+[[example]]
+name = "bench"
+path = "examples/bench.rs"

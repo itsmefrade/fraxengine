@@ -1,0 +1,15 @@
+[workspace]
+
+[package]
+name = "gpu-recon-ref-mc"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Reference vectors for the WebGPU HEVC motion compensation kernel (web/gpu-recon/mc.wgsl.mjs), from rust_h265's own inter_pred.rs"
+
+[features]
+# Same switch as rust_h265's: the portable scalar MC instead of the simd128 / NEON kernels.
+scalar = []
+
+[profile.release]
+opt-level = 3

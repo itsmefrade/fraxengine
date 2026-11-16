@@ -1,0 +1,14 @@
+[workspace]
+
+[package]
+name = "gpu-recon-ref-intra"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Reference vectors for the WebGPU HEVC intra prediction stage (web/gpu-recon/intra.*), bit exact with rust_h265"
+
+[dependencies]
+
+[profile.release]
+opt-level = 3
+debug = 1

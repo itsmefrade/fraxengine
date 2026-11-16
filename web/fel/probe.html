@@ -1,0 +1,21 @@
+<!doctype html><meta charset="utf-8"><title>pipeline probe</title><div id="host" style="width:480px;height:270px"></div><pre id="out"></pre>
+<script type="module">
+// Plays a file for ?secs and samples the worker stats every 500 ms (queue depths, decoder state), posts them. ?src=...&q=native|fast&secs=10
+import { Session } from '../player/js/session.js';
+const q = new URLSearchParams(location.search), secs = Number(q.get('secs')) || 10;
+const s = new Session({ url: q.get('src'), host: document.getElementById('host'), wantPlay: true, quality: q.get('q') });
+await s.open(); s.play();
+const rows = [];
+const t0 = performance.now();
+let last = null;
+while (performance.now() - t0 < secs * 1000) {
+  await new Promise(r => setTimeout(r, 500));
+  const v = s.stats.video, d = s.stats.demux;
+  if (!v) continue;
+  rows.push({ vs: v.vsyncMs, fps: v.fps, t: +((performance.now() - t0) / 1000).toFixed(1), shown: v.shown, dropped: v.dropped, queue: v.queue, inq: v.inq, dq: v.decodeQueue, sub: v.dbg?.submitted, out: v.dbg?.outputs, dv: v.dv && { blSub: v.dv.dbg?.blSub, blOut: v.dv.dbg?.blOut, dqs: v.dv.dbg?.dqs, inq: v.dv.dbg?.dvInq }, demux: d && { read: d.packetsRead, sent: d.packetsSent, pend: d.pendingBytes, ...d } });
+}
+const r = { test: 'pipeline-probe', src: q.get('src'), q: q.get('q'), rows, final: s.snapshot() && { demux: s.stats.demux } };
+document.getElementById('out').textContent = JSON.stringify(rows.slice(-3), null, 1);
+window.probe = r;
+if (q.has('report')) await fetch('/results', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(r) });
+</script>

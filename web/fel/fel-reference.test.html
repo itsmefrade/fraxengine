@@ -1,0 +1,27 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>FEL compositor: reference test</title>
+<style>body{font:13px ui-monospace,monospace;margin:12px}pre{white-space:pre-wrap}canvas{width:960px;max-width:100%;background:#222}</style>
+<h1>FEL compositor: reference test</h1>
+<p>Run <code>await runFelTest({steps:[...]})</code> from the console or press a button. Steps: <code>probe</code>, <code>display</code>, <code>exact</code>, <code>hw</code> (decodes all frames, reads 12 checkpoints back), <code>fps</code>. Fixtures are read through the git-ignored symlink <code>web/fel/fixtures</code> (local test media) and <code>web/fixtures</code>.</p>
+<button data-steps="probe,display">probe + display model</button>
+<button data-steps="exact">exact planes (gold hashes)</button>
+<button data-steps="exact,hw">exact + hardware compare</button>
+<button data-steps="fps">fps</button>
+<canvas id="out" width="1920" height="1080"></canvas>
+<pre id="log"></pre>
+<script type="module">
+import { runFelTest } from './fel-test.mjs';
+window.runFelTest = runFelTest;
+// Unattended run: ?auto=exact,hw,fps[&canvasMaxWidth=3840&name=run1] posts the result JSON to /results (web/server.py).
+const q = new URLSearchParams(location.search);
+if (q.get('auto')) {
+  const opts = { steps: q.get('auto').split(',') };
+  if (q.get('canvasMaxWidth')) opts.canvasMaxWidth = +q.get('canvasMaxWidth');
+  if (q.get('frames')) opts.frames = +q.get('frames');
+  if (q.get('canvasColorSpace')) opts.canvasColorSpace = q.get('canvasColorSpace');
+  runFelTest(opts).then(r => fetch('/results', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: q.get('name') ?? 'fel-auto', opts, result: r }) }))
+    .catch(e => fetch('/results', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: q.get('name') ?? 'fel-auto', error: String(e.stack ?? e) }) }));
+}
+for (const b of document.querySelectorAll('button')) b.onclick = () => runFelTest({ steps: b.dataset.steps.split(',') }).catch(e => { document.getElementById('log').textContent += 'ERROR ' + e.stack + '\n'; });
+</script>

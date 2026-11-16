@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Aether Player acceptance</title>
+<style>
+  body { font: 13px/1.4 system-ui, sans-serif; margin: 16px; background: #0b0c0e; color: #e8e9ec; }
+  #host { width: 480px; height: 270px; background: #000; display: flex; } #host canvas { width: 100%; height: 100%; object-fit: contain; }
+  pre { white-space: pre-wrap; font: 12px ui-monospace, Menlo, monospace; }
+  button { font: inherit; padding: 6px 14px; }
+</style>
+</head>
+<body>
+<h3>Aether Player acceptance (M1)</h3>
+<p>Query: <code>?secs=60</code> (4K playback length, default 60), <code>?quick=1</code> (10 s), <code>?auto=1</code> (run without clicking; audio may stay blocked by autoplay policy).</p>
+<button id="run">Run</button>
+<div id="host"></div>
+<pre id="out"></pre>
+<script type="module" src="js/test.js"></script>
+</body>
+</html>

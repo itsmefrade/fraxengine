@@ -1,0 +1,20 @@
+HRTF data in hrtf_data.rs
+=========================
+
+Source:   HRTF Measurements of a KEMAR Dummy-Head Microphone
+          Bill Gardner and Keith Martin, MIT Media Lab Machine Listening Group, May 1994
+          https://sound.media.mit.edu/resources/KEMAR.html
+Archive:  https://sound.media.mit.edu/resources/KEMAR/diffuse.zip
+          (the 128 point "compact" responses, equalised to the diffuse field)
+Licence:  "This data is Copyright 1994 by the MIT Media Laboratory. It is provided free with no
+          restrictions on use, provided the authors are cited when the data is used in any research
+          or commercial application." (README of the archive; hrtfdoc.txt: "provided without any
+          usage restrictions. We request that you cite the authors when using this data.")
+          Attribution: Gardner, W. G. and Martin, K. D., "HRTF measurements of a KEMAR",
+          J. Acoust. Soc. Am. 97(6), 3907-3908, 1995.
+
+Used:     14 measured directions of the right hemisphere (see tools/gen_hrtf.py); the left hemisphere
+          is the same data with the two ears swapped. Samples are stored exactly as measured
+          (16 bit integers, 44.1 kHz) and resampled at run time to the output sample rate.
+          The raw dataset is not part of this repository; regenerate with
+          `python3 -I rust/aether-audio/tools/gen_hrtf.py`.

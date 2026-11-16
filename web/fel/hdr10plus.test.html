@@ -1,0 +1,14 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>FEL HDR10+ test</title>
+<style>body{font:13px ui-monospace,monospace;margin:12px}pre{white-space:pre-wrap}</style>
+<h1>FEL HDR10+ test</h1>
+<p><code>?auto=1&amp;frames=240&amp;name=x</code> posts the result to <code>/results</code>.</p>
+<pre id="log"></pre>
+<script type="module">
+import { runHdr10PlusTest } from './hdr10plus-test.mjs';
+window.runHdr10PlusTest = runHdr10PlusTest;
+const q = new URLSearchParams(location.search);
+const post = body => fetch('/results', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body, (k, v) => (v === Infinity ? 'inf' : v)) });
+if (q.get('auto')) runHdr10PlusTest({ frames: +(q.get('frames') ?? 240) }).then(r => post({ name: q.get('name') ?? 'hdr10plus', result: r })).catch(e => post({ name: q.get('name') ?? 'hdr10plus', error: String(e.stack ?? e) }));
+</script>

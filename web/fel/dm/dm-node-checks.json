@@ -1,0 +1,520 @@
+{
+ "failures": 0,
+ "results": [
+  {
+   "name": "ST 2094-10 B.2 (5): L(x1)=y1, L(x2)=y2, L(x3)=y3",
+   "ok": true,
+   "detail": {
+    "c": [
+     0.004056610678367037,
+     0.19111744259163072,
+     0.0016612486209048299
+    ],
+    "y2": 3.828919512892139,
+    "err": [
+     -8.673617379884035e-19,
+     -4.440892098500626e-16,
+     1.4210854715202004e-14
+    ]
+   }
+  },
+  {
+   "name": "ST 2094-10 B.2 (4): y2 = sqrt(x2 sqrt(y1 y3)) before the 0.8 y3 bound",
+   "ok": true,
+   "detail": 3.828919512892139
+  },
+  {
+   "name": "ST 2094-10 B.2 example: y2 = 29 nits for y1 0.5, y3 100, x2 120",
+   "ok": true,
+   "detail": 29.129506302439406
+  },
+  {
+   "name": "sigmoid monotonic (c3 >= 0)",
+   "ok": true
+  },
+  {
+   "name": "spline 100 nit target: anchors (SMin,SMid,SMax) -> (TMin,TMid,TMax)",
+   "ok": true,
+   "detail": {
+    "tMid": 0.2540392107586995,
+    "sMid": 0.31746031746031744,
+    "tMax": 0.508078421517399,
+    "tMaxPq": 0.508078421517399
+   }
+  },
+  {
+   "name": "spline 100 nit target: monotonic over [0,1], max slope 0.937 (cap 3 per segment)",
+   "ok": true
+  },
+  {
+   "name": "spline 100 nit target: C1 at SMid",
+   "ok": true,
+   "detail": {
+    "dl": 0.936578555044143,
+    "dr": 0.9365779541359309,
+    "slopeMid": 0.9365788932983821
+   }
+  },
+  {
+   "name": "spline 100 nit target: output at SMax is TMax <= target peak",
+   "ok": true,
+   "detail": {
+    "out": 0.508078421517399,
+    "tMaxPq": 0.508078421517399
+   }
+  },
+  {
+   "name": "spline 203 nit target: anchors (SMin,SMid,SMax) -> (TMin,TMid,TMax)",
+   "ok": true,
+   "detail": {
+    "tMid": 0.3120686124213423,
+    "sMid": 0.31746031746031744,
+    "tMax": 0.5806888810416109,
+    "tMaxPq": 0.5806888810416109
+   }
+  },
+  {
+   "name": "spline 203 nit target: monotonic over [0,1], max slope 0.995 (cap 3 per segment)",
+   "ok": true
+  },
+  {
+   "name": "spline 203 nit target: C1 at SMid",
+   "ok": true,
+   "detail": {
+    "dl": 0.9946082917267063,
+    "dr": 0.9946072679900553,
+    "slopeMid": 0.9946082949610249
+   }
+  },
+  {
+   "name": "spline 203 nit target: output at SMax is TMax <= target peak",
+   "ok": true,
+   "detail": {
+    "out": 0.5806888810416109,
+    "tMaxPq": 0.5806888810416109
+   }
+  },
+  {
+   "name": "spline 600 nit target: anchors (SMin,SMid,SMax) -> (TMin,TMid,TMax)",
+   "ok": true,
+   "detail": {
+    "tMid": 0.31746031746031744,
+    "sMid": 0.31746031746031744,
+    "tMax": 0.6962940856782411,
+    "tMaxPq": 0.6962940856782411
+   }
+  },
+  {
+   "name": "spline 600 nit target: monotonic over [0,1], max slope 1.000 (cap 3 per segment)",
+   "ok": true
+  },
+  {
+   "name": "spline 600 nit target: C1 at SMid",
+   "ok": true,
+   "detail": {
+    "dl": 0.9999999999732445,
+    "dr": 0.9999997546139561,
+    "slopeMid": 1
+   }
+  },
+  {
+   "name": "spline 600 nit target: output at SMax is TMax <= target peak",
+   "ok": true,
+   "detail": {
+    "out": 0.6962940856782411,
+    "tMaxPq": 0.6962940856782411
+   }
+  },
+  {
+   "name": "spline 1000 nit target: anchors (SMin,SMid,SMax) -> (TMin,TMid,TMax)",
+   "ok": true,
+   "detail": {
+    "tMid": 0.31746031746031744,
+    "sMid": 0.31746031746031744,
+    "tMax": 0.751827096247041,
+    "tMaxPq": 0.751827096247041
+   }
+  },
+  {
+   "name": "spline 1000 nit target: monotonic over [0,1], max slope 1.000 (cap 3 per segment)",
+   "ok": true
+  },
+  {
+   "name": "spline 1000 nit target: C1 at SMid",
+   "ok": true,
+   "detail": {
+    "dl": 0.9999999999732445,
+    "dr": 0.9999999965870643,
+    "slopeMid": 1
+   }
+  },
+  {
+   "name": "spline 1000 nit target: output at SMax is TMax <= target peak",
+   "ok": true,
+   "detail": {
+    "out": 0.751827096247041,
+    "tMaxPq": 0.751827096247041
+   }
+  },
+  {
+   "name": "spline 3000 nit target: bypass (source inside target)",
+   "ok": true,
+   "detail": {
+    "srcMaxNits": 2569.9589371713264
+   }
+  },
+  {
+   "name": "source max below target peak: bypass, output equals input",
+   "ok": true
+  },
+  {
+   "name": "static tone mapping: source range is the mastering display (L6), L1 average not used",
+   "ok": true,
+   "detail": {
+    "sMin": 0.015076399042367938,
+    "sMid": 0.37007479674979576,
+    "sMax": 0.9025723933109373,
+    "from": "L6"
+   }
+  },
+  {
+   "name": "trim: exact target 100 nit uses the L2 100 nit set",
+   "ok": true,
+   "detail": [
+    "L2@2081",
+    "L2@2081"
+   ]
+  },
+  {
+   "name": "trim: exact target 1000 nit uses the L2 1000 nit set",
+   "ok": true,
+   "detail": [
+    "L2@2081",
+    "L2@3079"
+   ]
+  },
+  {
+   "name": "trim: 600 nit is the PQ-linear mix of the 100 and 1000 nit sets",
+   "ok": true,
+   "detail": {
+    "w": 0.7715430861723447,
+    "slope": 2043.7795591182364
+   }
+  },
+  {
+   "name": "trim: above the highest target fades to neutral at the mastering peak",
+   "ok": true,
+   "detail": {
+    "from": [
+     "L2@3079",
+     "neutral@3696"
+    ],
+    "slope": 2053.990275526742
+   }
+  },
+  {
+   "name": "trim: display at or above the mastering peak gets none",
+   "ok": true
+  },
+  {
+   "name": "trim: below the lowest target uses the lowest",
+   "ok": true
+  },
+  {
+   "name": "trim: CM v4.0 L8 index 1 = 100 nit, index 27 = 600 nit",
+   "ok": true,
+   "detail": {
+    "a": [
+     "L8@2081",
+     "L8@2081"
+    ],
+    "b": [
+     "L8@2081",
+     "L8@2851"
+    ]
+   }
+  },
+  {
+   "name": "ICtCp RGB->LMS rows sum to 1 (D65 white is L=M=S=Y)",
+   "ok": true,
+   "detail": [
+    1,
+    1,
+    1
+   ]
+  },
+  {
+   "name": "ICtCp neutral has Ct = Cp = 0",
+   "ok": true,
+   "detail": [
+    0.5,
+    0,
+    0
+   ]
+  },
+  {
+   "name": "4000 -> 1000 spline ictcp, L2 trims: neutral ramp stays neutral (max chroma 0.0000 DeltaE ITP <= 0.05)",
+   "ok": true
+  },
+  {
+   "name": "4000 -> 1000 spline ictcp, L2 trims: neutral ramp monotonic",
+   "ok": true
+  },
+  {
+   "name": "4000 -> 1000 spline ictcp, L2 trims: output never above the target peak (max 1000.00 nits)",
+   "ok": true
+  },
+  {
+   "name": "4000 -> 600 spline ictcp (interpolated trims): neutral ramp stays neutral (max chroma 0.0000 DeltaE ITP <= 0.05)",
+   "ok": true
+  },
+  {
+   "name": "4000 -> 600 spline ictcp (interpolated trims): neutral ramp monotonic",
+   "ok": true
+  },
+  {
+   "name": "4000 -> 600 spline ictcp (interpolated trims): output never above the target peak (max 600.00 nits)",
+   "ok": true
+  },
+  {
+   "name": "4000 -> 203 spline ictcp: neutral ramp stays neutral (max chroma 0.0000 DeltaE ITP <= 0.05)",
+   "ok": true
+  },
+  {
+   "name": "4000 -> 203 spline ictcp: neutral ramp monotonic",
+   "ok": true
+  },
+  {
+   "name": "4000 -> 203 spline ictcp: output never above the target peak (max 203.00 nits)",
+   "ok": true
+  },
+  {
+   "name": "4000 -> 100 spline ictcp: neutral ramp stays neutral (max chroma 0.0000 DeltaE ITP <= 0.05)",
+   "ok": true
+  },
+  {
+   "name": "4000 -> 100 spline ictcp: neutral ramp monotonic",
+   "ok": true
+  },
+  {
+   "name": "4000 -> 100 spline ictcp: output never above the target peak (max 100.00 nits)",
+   "ok": true
+  },
+  {
+   "name": "4000 -> 100 sigmoid: neutral ramp stays neutral (max chroma 0.0000 DeltaE ITP <= 0.05)",
+   "ok": true
+  },
+  {
+   "name": "4000 -> 100 sigmoid: neutral ramp monotonic",
+   "ok": true
+  },
+  {
+   "name": "4000 -> 100 sigmoid: output never above the target peak (max 100.00 nits)",
+   "ok": true
+  },
+  {
+   "name": "4000 -> 1000 sigmoid: neutral ramp stays neutral (max chroma 0.0000 DeltaE ITP <= 0.05)",
+   "ok": true
+  },
+  {
+   "name": "4000 -> 1000 sigmoid: neutral ramp monotonic",
+   "ok": true
+  },
+  {
+   "name": "4000 -> 1000 sigmoid: output never above the target peak (max 660.46 nits)",
+   "ok": true
+  },
+  {
+   "name": "1000 -> 100 spline ipt (Profile 5 space): neutral ramp stays neutral (max chroma 0.0025 DeltaE ITP <= 0.05)",
+   "ok": true
+  },
+  {
+   "name": "1000 -> 100 spline ipt (Profile 5 space): neutral ramp monotonic",
+   "ok": true
+  },
+  {
+   "name": "1000 -> 100 spline ipt (Profile 5 space): output never above the target peak (max 100.00 nits)",
+   "ok": true
+  },
+  {
+   "name": "L8 only -> 100 spline: neutral ramp stays neutral (max chroma 0.0000 DeltaE ITP <= 0.05)",
+   "ok": true
+  },
+  {
+   "name": "L8 only -> 100 spline: neutral ramp monotonic",
+   "ok": true
+  },
+  {
+   "name": "L8 only -> 100 spline: output never above the target peak (max 100.00 nits)",
+   "ok": true
+  },
+  {
+   "name": "no RPU, 4000 nit default -> 1000 spline: neutral ramp stays neutral (max chroma 0.0000 DeltaE ITP <= 0.05)",
+   "ok": true
+  },
+  {
+   "name": "no RPU, 4000 nit default -> 1000 spline: neutral ramp monotonic",
+   "ok": true
+  },
+  {
+   "name": "no RPU, 4000 nit default -> 1000 spline: output never above the target peak (max 1000.00 nits)",
+   "ok": true
+  }
+ ],
+ "scenarios": [
+  {
+   "name": "4000 -> 1000 spline ictcp, L2 trims",
+   "bypass": false,
+   "space": "ictcp",
+   "curve": "spline",
+   "tMid": 0.31746031746031744,
+   "sMid": 0.31746031746031744,
+   "trim": [
+    "L2@2081",
+    "L2@3079"
+   ],
+   "neutralChromaDeItpMax": 0,
+   "neutralAtNits": 3069.082,
+   "monotonic": true,
+   "outMaxNits": 1000,
+   "peak": 1000,
+   "hueShiftMaxDeg": 1.48
+  },
+  {
+   "name": "4000 -> 600 spline ictcp (interpolated trims)",
+   "bypass": false,
+   "space": "ictcp",
+   "curve": "spline",
+   "tMid": 0.31746031746031744,
+   "sMid": 0.31746031746031744,
+   "trim": [
+    "L2@2081",
+    "L2@3079"
+   ],
+   "neutralChromaDeItpMax": 0,
+   "neutralAtNits": 2688.331,
+   "monotonic": true,
+   "outMaxNits": 600,
+   "peak": 600,
+   "hueShiftMaxDeg": 1.86
+  },
+  {
+   "name": "4000 -> 203 spline ictcp",
+   "bypass": false,
+   "space": "ictcp",
+   "curve": "spline",
+   "tMid": 0.3120686124213423,
+   "sMid": 0.31746031746031744,
+   "trim": [
+    "L2@2081",
+    "L2@3079"
+   ],
+   "neutralChromaDeItpMax": 0,
+   "neutralAtNits": 1350.0469,
+   "monotonic": true,
+   "outMaxNits": 203,
+   "peak": 203,
+   "hueShiftMaxDeg": 2.39
+  },
+  {
+   "name": "4000 -> 100 spline ictcp",
+   "bypass": false,
+   "space": "ictcp",
+   "curve": "spline",
+   "tMid": 0.2540392107586995,
+   "sMid": 0.31746031746031744,
+   "trim": [
+    "L2@2081",
+    "L2@2081"
+   ],
+   "neutralChromaDeItpMax": 0,
+   "neutralAtNits": 3069.082,
+   "monotonic": true,
+   "outMaxNits": 100,
+   "peak": 100,
+   "hueShiftMaxDeg": 2.22
+  },
+  {
+   "name": "4000 -> 100 sigmoid",
+   "bypass": false,
+   "space": "ictcp",
+   "curve": "sigmoid",
+   "trim": [
+    "L2@2081",
+    "L2@2081"
+   ],
+   "neutralChromaDeItpMax": 0,
+   "neutralAtNits": 432.1429,
+   "monotonic": true,
+   "outMaxNits": 100,
+   "peak": 100,
+   "hueShiftMaxDeg": 1.02
+  },
+  {
+   "name": "4000 -> 1000 sigmoid",
+   "bypass": false,
+   "space": "ictcp",
+   "curve": "sigmoid",
+   "trim": [
+    "L2@2081",
+    "L2@3079"
+   ],
+   "neutralChromaDeItpMax": 0,
+   "neutralAtNits": 1350.0469,
+   "monotonic": true,
+   "outMaxNits": 660.46,
+   "peak": 1000,
+   "hueShiftMaxDeg": 0
+  },
+  {
+   "name": "1000 -> 100 spline ipt (Profile 5 space)",
+   "bypass": false,
+   "space": "ipt",
+   "curve": "spline",
+   "tMid": 0.32724814068711816,
+   "sMid": 0.3465201465201465,
+   "trim": [
+    "L2@2081",
+    "L2@2081"
+   ],
+   "neutralChromaDeItpMax": 0.0025,
+   "neutralAtNits": 4000,
+   "monotonic": true,
+   "outMaxNits": 100,
+   "peak": 100,
+   "hueShiftMaxDeg": 2.46
+  },
+  {
+   "name": "L8 only -> 100 spline",
+   "bypass": false,
+   "space": "ictcp",
+   "curve": "spline",
+   "tMid": 0.2540392107586995,
+   "sMid": 0.2686202686202686,
+   "trim": [
+    "L8@2081",
+    "L8@2081"
+   ],
+   "neutralChromaDeItpMax": 0,
+   "neutralAtNits": 43.1201,
+   "monotonic": true,
+   "outMaxNits": 100,
+   "peak": 100,
+   "hueShiftMaxDeg": 2.9
+  },
+  {
+   "name": "no RPU, 4000 nit default -> 1000 spline",
+   "bypass": false,
+   "space": "ictcp",
+   "curve": "spline",
+   "tMid": 0.36102895732437496,
+   "sMid": 0.36102895732437496,
+   "neutralChromaDeItpMax": 0,
+   "neutralAtNits": 43.1201,
+   "monotonic": true,
+   "outMaxNits": 1000,
+   "peak": 1000,
+   "hueShiftMaxDeg": 1.16
+  }
+ ]
+}

@@ -1,0 +1,41 @@
+// SPDX-License-Identifier: LGPL-2.1-or-later
+
+//! Independent DTS Coherent Acoustics (DCA) bitstream parser and decoder.
+//!
+//! A native Rust port of ffmpeg's `dca` decoder, structured like the sibling
+//! `eac3` crate. Phase 1 targets the DTS **core** (5.1 lossy bed); the EXSS +
+//! XLL lossless extension (7.1) is added in a later phase.
+//!
+//! The reference C sources are FFmpeg's `libavcodec/dca*.c` (FFmpeg 8.0).
+//! Being a translation of them, this crate is distributed under their
+//! licence, LGPL-2.1-or-later; `NOTICE` lists the FFmpeg files and their
+//! copyright holders.
+
+mod bitstream;
+#[cfg(test)]
+mod bitstream_writer;
+
+mod cpu;
+mod dcadec;
+pub mod extract;
+pub mod hd;
+pub mod parser;
+mod pcm;
+pub mod spatial;
+mod types;
+
+pub use dcadec::xmeta::{
+    BedFold, FoldEstimator, FoldPlan, MAX_SOURCES, REFERENCE_CHANNELS, REFERENCE_MASK_5_1,
+    REFERENCE_MASK_7_1, REFERENCE_SPEAKERS, SourceMetadata, SourceRole, SphericalPosition,
+    XMetadata, XMetadataError, gain_code_linear,
+};
+pub use dcadec::xrender::FoldRenderer;
+pub use extract::{ExtractError, Extractor, Frame};
+pub use hd::{ExssKind, HdDecoder, HdError, HdFrame, exss_has_xll, exss_kind, exss_substream_size};
+pub use parser::{
+    AudioMode, FrameInfo, ParseError as HeaderParseError, SYNCWORD_CORE_BE, SYNCWORD_SUBSTREAM,
+    parse_header,
+};
+pub use pcm::{CorePcmFrame, DecodeError, PcmDecoder, PcmPushResult, bed_layout};
+pub use spatial::{SpatialChannel, XPresentation};
+pub use types::BedChannel;

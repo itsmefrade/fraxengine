@@ -1,0 +1,74 @@
+<!doctype html><meta charset="utf-8"><title>Exact HEVC pool benchmark (base vs aether-hevc)</title>
+<pre id=out>running...</pre>
+<script type=module>
+// ?variant=base|ref &stream=fel|awaken|p5 &n=4 &frames=300 &hash=0|1 &name=x
+// Free-running consumer of ExactStream (GOP parallel WASM workers); reports sustained decode throughput and, with hash=1,
+// verifies each frame's Y/U/V SHA-256 against FFmpeg. Posts the JSON to /results.
+const q=new URLSearchParams(location.search);
+const variant=q.get('variant')||'ref',stream=q.get('stream')||'fel',n=+(q.get('n')||4),maxFrames=+(q.get('frames')||300),hash=q.get('hash')==='1',name=q.get('name')||'';
+const {ExactStream}=await import(variant==='base'?'./stream.js':'./stream-ref.js');
+const layer=q.get('layer')||'bl';
+const hex=b=>[...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,'0')).join('');
+const fixtures=stream==='fel'?{}:{base:new URL('./dev-media/',location.href),prefix:stream};
+let refs=null;
+if(hash){
+  const u=stream==='fel'?new URL(`./refs/${layer}.json`,location.href):new URL(`./dev-media/${stream}-refs.json`,location.href);
+  refs=(await fetch(u).then(r=>r.json())).frames;
+}
+const pace=+(q.get('pace')||0),pre=+(q.get('pre')||4),budget=+(q.get('budget')||1536),qmax=+(q.get('qmax')||12);
+const res={variant,stream,n,hash,name,cores:navigator.hardwareConcurrency,ua:navigator.userAgent};
+try{
+  const s=new ExactStream({n,layers:[layer],fixtures,budgetMB:budget});
+  const t0=performance.now();
+  await s.start();
+  res.startMs=Math.round(performance.now()-t0);
+  let k=0,tFirst=0,tLast=0,mismatches=0,first=null;
+  if(pace>0){
+    // Paced playback simulation (pace = frames per second): a puller moves frames from the pool into a queue of `qmax` (the player's video
+    // queue), playback starts when `pre` frames are waiting, then shows frame e at its tick; a tick without frame e is a drop.
+    const queue=[],per=1000/pace;let pulled=0,ended=false,perr=null;
+    (async()=>{try{while(pulled<maxFrames){if(queue.length>=qmax){await new Promise(r=>setTimeout(r,2));continue;}
+      const f=await s.next(layer);if(!f)break;queue.push({k:pulled++,f});}}catch(e){perr=e;}ended=true;})();
+    while(!ended&&queue.length+s.lookahead(layer)<pre)await new Promise(r=>setTimeout(r,5));
+    const tPlay=performance.now();let shown=0,missed=0;const missAt=[];
+    for(;;){
+      const now=performance.now(),e=Math.floor((now-tPlay)/per);
+      if(e>=maxFrames)break;
+      while(queue.length&&queue[0].k<e)queue.shift();
+      if(queue.length&&queue[0].k===e){queue.shift();shown++;}
+      else if(shown+missed<e+1){missed=e+1-shown;missAt.push(Math.round((now-tPlay)/100)/10);}
+      if(perr)throw perr;
+      if(ended&&!queue.length&&s.lookahead(layer)===0&&e>=pulled)break;
+      await new Promise(r=>setTimeout(r,Math.max(1,tPlay+(e+1)*per-performance.now()-1)));
+    }
+    const sec={};for(const t of missAt)sec[Math.floor(t)]=(sec[Math.floor(t)]||0)+1;
+    Object.assign(res,{paced:pace,pre,budget,qmax,frames:pulled,shown,missed,missBySecond:sec,startMs:Math.round(tPlay-t0),peakBufferedMB:s.stats.peakBufferedMB,wasmMB:s.stats.wasmMB});
+    s.stop();k=maxFrames;
+  }
+  const ts=[];
+  while(k<maxFrames){
+    const f=await s.next(layer);
+    if(!f)break;
+    const now=performance.now();if(k===0)tFirst=now;tLast=now;ts.push(now);
+    if(hash){
+      const d=await Promise.all([f.planes.Y,f.planes.U,f.planes.V].map(p=>crypto.subtle.digest('SHA-256',p)));
+      const h=d.map(hex),r=refs[k];
+      if(!r||r[0]!==h[0]||r[1]!==h[1]||r[2]!==h[2]){mismatches++;if(first===null)first=k;}
+    }
+    k++;
+  }
+  if(!pace){
+    // pool throughput per GOP (frames of the GOP / time between delivering the previous GOP's last frame and this one's)
+    const gf=[];let end=-1,tPrev=tFirst;
+    for(const g of s.fx.layerGops[layer]){const last=end+g.count;if(last>=ts.length)break;gf.push(+(g.count*1000/(ts[last]-tPrev)).toFixed(1));tPrev=ts[last];end=last;}
+    res.gopFps=gf;
+  }
+  if(!pace)Object.assign(res,{frames:k,firstFrameMs:Math.round(tFirst-t0),totalMs:Math.round(tLast-t0),
+    overallFps:+(k/((tLast-t0)/1000)).toFixed(2),sustainedFps:k>1?+((k-1)/((tLast-tFirst)/1000)).toFixed(2):null,
+    mismatches:hash?mismatches:null,firstMismatch:first,peakBufferedMB:s.stats.peakBufferedMB,wasmMB:s.stats.wasmMB,workerInitMs:s.stats.workerInitMs});
+  s.stop();
+}catch(e){res.error=String(e&&e.stack||e);}
+out.textContent=JSON.stringify(res,null,1);
+await fetch('/results',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(res)});
+document.title='done';
+</script>

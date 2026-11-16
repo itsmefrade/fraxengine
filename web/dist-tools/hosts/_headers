@@ -1,0 +1,16 @@
+# Netlify and Cloudflare Pages. Copied to the site root by assemble.py.
+/*
+  Cross-Origin-Opener-Policy: same-origin
+  Cross-Origin-Embedder-Policy: require-corp
+  Cross-Origin-Resource-Policy: same-origin
+  X-Content-Type-Options: nosniff
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable
+/index.html
+  Cache-Control: no-cache
+/coi.js
+  Cache-Control: no-cache
+/coi-sw.js
+  Cache-Control: no-cache
+/manifest.json
+  Cache-Control: no-cache

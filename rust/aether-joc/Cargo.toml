@@ -1,0 +1,20 @@
+[package]
+name = "aether-joc"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+description = "Pure Rust E-AC-3 Joint Object Coding (Dolby Atmos in Dolby Digital Plus) object decoder, wasm32-unknown-unknown friendly"
+license = "LGPL-2.1-or-later"
+publish = false
+keywords = ["audio", "eac3", "joc", "atmos", "decoder"]
+
+[lib]
+path = "src/lib.rs"
+crate-type = ["rlib", "cdylib"]
+
+[features]
+# The raw `joc_*` wasm exports of the standalone module (own wasm32 build). Off inside the workspace.
+standalone-wasm = []
+
+[dependencies]
+aether-ac3 = { path = "../aether-ac3" }

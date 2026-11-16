@@ -1,0 +1,26 @@
+<!doctype html><meta charset="utf-8"><title>decode bench</title><pre id="out"></pre>
+<script type="module">
+// Raw WebCodecs decode throughput of a packet dump (tools/dump-packets.mjs). ?name=iphone&hw=prefer-hardware&n=600&close=1&name2=label
+const q = new URLSearchParams(location.search);
+const name = q.get('name') || 'iphone', hw = q.get('hw') || 'prefer-hardware', N = Number(q.get('n')) || 600;
+const meta = await (await fetch(`media/hlg/${name}.json`)).json();
+const bin = new Uint8Array(await (await fetch(`media/hlg/${name}.bin`)).arrayBuffer());
+const desc = Uint8Array.from(atob(meta.description), c => c.charCodeAt(0));
+const cfg = { codec: q.get('codec') || meta.fallbackCodecString || meta.codec, codedWidth: meta.width, codedHeight: meta.height, hardwareAcceleration: hw, optimizeForLatency: q.get('ofl') !== '0', description: desc };
+const sup = await VideoDecoder.isConfigSupported(cfg);
+let outN = 0, first = 0, t0 = 0, last = 0, err = null;
+const dec = new VideoDecoder({ output: f => { if (!outN) first = performance.now(); outN++; last = performance.now(); if (q.get('hold') !== '1') f.close(); }, error: e => { err = String(e); } });
+dec.configure(cfg);
+t0 = performance.now();
+const pk = meta.packets.slice(0, N);
+for (const p of pk) {
+  while (dec.decodeQueueSize > 4) await new Promise(r => setTimeout(r, 0));
+  dec.decode(new EncodedVideoChunk({ type: p.key ? 'key' : 'delta', timestamp: p.pts, duration: p.dur, data: bin.subarray(p.off, p.off + p.len) }));
+}
+await dec.flush();
+const dt = (last - first) / 1000;
+const r = { test: 'decode-bench', name, hw, supported: sup.supported, cfgCodec: cfg.codec, frames: outN, err, fps: +((outN - 1) / dt).toFixed(1), totalMs: Math.round(last - t0), firstMs: Math.round(first - t0) };
+document.getElementById('out').textContent = JSON.stringify(r, null, 1);
+window.benchResult = r;
+if (q.has('report')) fetch('/results', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(r) });
+</script>

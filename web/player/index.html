@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Aether Web Player</title>
+<link rel="stylesheet" href="player.css">
+</head>
+<body>
+<header>
+  <label class="btn" for="file">Open file</label>
+  <input id="file" type="file" accept="video/*,audio/*,.mp4,.m4v,.mov,.mkv" hidden>
+  <input id="url" type="text" placeholder="or paste an http(s) URL / path and press Enter" spellcheck="false">
+  <span id="status">idle</span>
+</header>
+<main id="stage" aria-label="video">
+  <div id="drop-hint">Drop a file here</div>
+  <pre id="stats" class="hidden" aria-live="off"></pre>
+</main>
+<footer>
+  <button id="play" disabled>Play</button>
+  <button id="stop" disabled>Stop</button>
+  <input id="seek" type="range" min="0" max="1000" value="0" step="1" disabled>
+  <span id="time">0:00 / 0:00</span>
+  <select id="outmode" title="Audio output rendering"><option value="speakers">Speakers</option><option value="headphones">Headphones</option></select>
+  <select id="quality" title="Dolby Vision / HDR10+ quality (restarts at the current position)">
+    <option value="auto">HDR: Auto</option><option value="native">Native (BL as HDR10)</option><option value="fast">Fast (hw)</option><option value="high">High (exact BL)</option><option value="reference">Reference (exact both)</option>
+  </select>
+  <select id="audsel" title="Audio track"></select>
+  <select id="subsel" title="Subtitles"><option value="">Subtitles: off</option></select>
+  <label class="chk" title="PGS: only forced (foreign language) objects"><input type="checkbox" id="forced">Forced only</label>
+  <select id="norm" title="Downmix headroom: scale the fold-down by 1 / its worst-case peak gain"><option value="auto">Normalize: auto</option><option value="on">Normalize: on</option><option value="off">Normalize: off</option></select>
+  <label class="chk" title="Engine peak limiter (-0.18 dBFS), off by default"><input type="checkbox" id="limiter">Limiter</label>
+  <label class="chk" title="E-AC-3 Dolby Atmos (JOC): render the objects to 7.1.4; off plays the 5.1/7.1 bed"><input type="checkbox" id="joc" checked>JOC objects</label>
+  <button id="info" title="Toggle stats (i)">Stats</button>
+</footer>
+<details id="about"><summary>About / licenses</summary><p>Binaural rendering uses KEMAR HRTF data: Gardner, W. G. and Martin, K. D., "HRTF measurements of a KEMAR", J. Acoust. Soc. Am. 97(6), 3907-3908, 1995 (MIT Media Lab, <a href="https://sound.media.mit.edu/resources/KEMAR.html">source</a>). Licences and source offer: <a href="../LICENSES.md">LICENSES.md</a>.</p></details>
+<details id="logbox"><summary>Log</summary><pre id="log"></pre></details>
+<script type="module" src="js/app.js"></script>
+</body>
+</html>

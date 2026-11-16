@@ -1,0 +1,15 @@
+player.example.org {
+	root * /var/www/aether-web
+	file_server
+	encode zstd gzip
+	header {
+		Cross-Origin-Opener-Policy same-origin
+		Cross-Origin-Embedder-Policy require-corp
+		Cross-Origin-Resource-Policy same-origin
+		X-Content-Type-Options nosniff
+	}
+	@assets path /assets/*
+	header @assets Cache-Control "public, max-age=31536000, immutable"
+	@entry path /index.html /coi.js /coi-sw.js /manifest.json
+	header @entry Cache-Control "no-cache"
+}

@@ -1,0 +1,13 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>FEL MMR test</title>
+<style>body{font:13px ui-monospace,monospace;margin:12px}pre{white-space:pre-wrap}</style>
+<h1>FEL MMR test</h1>
+<pre id="log"></pre>
+<script type="module">
+import { runMmrTest } from './mmr-test.mjs';
+window.runMmrTest = runMmrTest;
+const q = new URLSearchParams(location.search);
+const post = body => fetch('/results', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+if (q.get('auto')) runMmrTest({ clip: q.get('clip') ?? 'woman' }).then(r => post({ name: q.get('name') ?? 'mmr', result: r })).catch(e => post({ name: q.get('name') ?? 'mmr', error: String(e.stack ?? e) }));
+</script>

@@ -1,0 +1,28 @@
+[package]
+name = "aether-dtsuhd"
+version = "0.1.0"
+edition = "2021"
+description = "Pure Rust DTS-UHD (ETSI TS 103 491) parser and ACE audio decoder, written from the published specification"
+license = "LGPL-2.1-or-later"
+publish = false
+
+# Standalone crate: do not join the parent rust/ workspace.
+[workspace]
+
+[lib]
+name = "aether_dtsuhd"
+path = "src/lib.rs"
+crate-type = ["rlib", "cdylib"]
+
+[dependencies]
+
+[dev-dependencies]
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+
+[profile.bench]
+inherits = "release"

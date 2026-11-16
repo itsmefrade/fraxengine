@@ -1,0 +1,17 @@
+[workspace]
+members = ["aether-core", "aether-dovi", "aether-player", "aether-audio", "aether-demux", "aether-wasm", "aether-ac3", "aether-subs", "aether-vc1", "aether-joc"]
+exclude = ["aether-ac3/wasm-bench", "aether-demux/vendor/mp4parse", "aether-audio/vendor/dca"]
+resolver = "3"
+
+[profile.release]
+lto = true
+opt-level = 3
+codegen-units = 1
+panic = "abort"
+
+[profile.dev.package.truehd]
+opt-level = 2
+
+# aether-vc1 conformance tests decode whole 1080p streams, build them optimised even in the test profile.
+[profile.dev.package.aether-vc1]
+opt-level = 3

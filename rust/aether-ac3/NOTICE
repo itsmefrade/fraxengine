@@ -1,0 +1,33 @@
+aether-ac3
+==========
+
+Pure Rust AC-3 / E-AC-3 decoder.
+
+This crate is a Rust translation of the decoding logic found in FFmpeg's
+libavcodec (ac3dec.c, eac3dec.c, ac3.c, ac3dsp.c, ac3_parser.c, ac3tab.c,
+ac3dec_data.c, eac3_data.c, kbdwin.c) and libavutil (lfg.c). It follows the
+FFmpeg float decoder step by step so that its output matches FFmpeg's.
+The coefficient tables in src/tables_gen.rs are extracted mechanically from
+FFmpeg's eac3_data.c and ac3.c by tools/gen_tables.py.
+
+FFmpeg is licensed under the GNU Lesser General Public License, version 2.1 or
+(at your option) any later version. As a derivative work, this crate is
+distributed under the same terms: LGPL-2.1-or-later.
+
+Copyright notices carried over from the original sources:
+
+  Copyright (c) 2001 Fabrice Bellard
+  Copyright (c) 2006 Kartikey Mahendra BHATT (bhattkm at gmail dot com)
+  Copyright (c) 2007-2008 Bartlomiej Wolowiec <bartek.wolowiec@gmail.com>
+  Copyright (c) 2007 Justin Ruggles <justin.ruggles@gmail.com>
+  Copyright (c) 2008 Justin Ruggles
+  Copyright (c) 2006 Justin Ruggles (ac3dsp)
+  Copyright (c) 2012 Justin Ruggles (kbdwin)
+  Copyright (c) 2010 Loren Merritt (lfg)
+
+AC-3 and E-AC-3 are specified by ATSC A/52 and ETSI TS 102 366. Dolby, Dolby
+Digital, Dolby Digital Plus and Dolby Atmos are trademarks of Dolby
+Laboratories; this project is not affiliated with or endorsed by Dolby.
+
+The full text of the LGPL-2.1 is available at
+https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html

@@ -1,0 +1,21 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>FEL hybrid quality mode</title>
+<style>body{font:13px ui-monospace,monospace;margin:12px}pre{white-space:pre-wrap}canvas{width:480px;background:#222}</style>
+<h1>FEL hybrid quality mode</h1>
+<p>Query: <code>?auto=1&amp;mode=exact-bl|exact-el|exact-both|hw&amp;n=4&amp;quality=1&amp;frames=1454&amp;name=x</code>. Posts the result JSON to <code>/results</code>.</p>
+<canvas id="out" width="1920" height="1080"></canvas>
+<pre id="log"></pre>
+<script type="module">
+import { runHybrid } from './hybrid-test.mjs';
+window.runHybrid = runHybrid;
+const q = new URLSearchParams(location.search);
+const post = body => fetch('/results', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body, (k, v) => (v === Infinity ? 'inf' : v)) });
+if (q.get('auto')) {
+  const opts = { mode: q.get('mode') ?? 'exact-bl', n: +(q.get('n') ?? 4), quality: q.get('quality') === '1', clip: q.get('clip') ?? 'fel-p7' };
+  if (q.get('frames')) opts.frames = +q.get('frames');
+  if (q.get('canvasMaxWidth')) opts.canvasMaxWidth = +q.get('canvasMaxWidth');
+  const name = q.get('name') ?? 'hybrid';
+  runHybrid(opts).then(r => post({ name, opts, result: r })).catch(e => post({ name, opts, error: String(e.stack ?? e) }));
+}
+</script>

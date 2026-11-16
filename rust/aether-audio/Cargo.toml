@@ -1,0 +1,21 @@
+[package]
+name = "aether-audio"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.89"
+license = "LGPL-3.0-only"
+description = "TrueHD and DTS decoders behind one trait, plus object and bed renderers"
+
+[lib]
+crate-type = ["rlib", "cdylib"]
+
+[features]
+# The pre-workspace raw ABI (`aether_audio_*`). aether-wasm replaces it with the unified decoder ABI.
+default = ["legacy-wasm-exports"]
+legacy-wasm-exports = []
+
+[dependencies]
+aether-ac3 = { path = "../aether-ac3" }
+aether-joc = { path = "../aether-joc" }
+dca = { path = "vendor/dca" }
+truehd = { git = "https://github.com/superuser404notfound/truehdd", rev = "33bae1657ceb25b5fe0347f42c544c3414e2760e", default-features = false, features = ["matrix-interpolation"] }

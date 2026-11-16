@@ -1,0 +1,17 @@
+[package]
+name = "aether-dovi"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+license = "LGPL-3.0-only"
+description = "HEVC framing, Dolby Vision RPU guard and parse, BL/EL split, POC pairing, FEL GPU parameters and SPS VUI relabelling"
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+dolby_vision = { version = "=3.4.0", default-features = false, optional = true }
+
+[features]
+default = ["semantic-rpu"]
+semantic-rpu = ["dep:dolby_vision"]

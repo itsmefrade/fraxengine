@@ -1,0 +1,11 @@
+{
+  "schema": "aether-upstream-reference-provenance-v1",
+  "upstreamCommit": "74db82a2b02d3e282d8f04a415578e34e936c346",
+  "upstreamPath": "Sources/AetherEngine/Audio/Spatial/BedRegression.swift",
+  "upstreamSha256": "88d1648fb294870e13b8f0fe1bb06a6f8da3f7720973d3de4ecd37ea39b1899a",
+  "referencePath": "reference/BedRegression.swift",
+  "referenceSha256": "32258f7dacc9a3e227873dd7f800893fcfc4f53cc4226d04a40b6feb426204d0",
+  "transformation": "Remove first comment line, outer #if line and final #endif only; all remaining bytes identical.",
+  "byteExactAfterTransformation": true,
+  "scope": "Source provenance only. Minimal reference harness types and synthetic output comparison do not establish full native/Dolby conformance."
+}

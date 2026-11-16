@@ -1,0 +1,21 @@
+# OS and editors
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Rust, Node, Python
+target/
+node_modules/
+__pycache__/
+*.pyc
+
+# Build outputs. WASM folders and generated fixtures have their own .gitignore next to them.
+web/dist/
+
+# Local test media (see docs/testing.md). Put files here or point AETHER_LAB at another folder.
+test-media/
+
+# Logs and local measurement output
+*.log
+measurements/local/

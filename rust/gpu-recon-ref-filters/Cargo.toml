@@ -1,0 +1,15 @@
+[workspace]
+
+[package]
+name = "gpu-recon-ref-filters"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+license = "MIT OR Apache-2.0"
+publish = false
+description = "Reference test vectors for the WGSL HEVC deblocking and SAO kernels (web/gpu-recon), bit exact with rust_h265"
+
+[dependencies]
+
+[profile.release]
+opt-level = 3

@@ -1,0 +1,26 @@
+<!doctype html><meta charset="utf-8"><title>Exact HEVC parallel GOP decode</title>
+<style>body{font:13px/1.4 system-ui;margin:16px;max-width:1000px}input,select{width:70px}pre{background:#f4f4f4;padding:8px;overflow:auto}label{margin-right:10px}</style>
+<h3>Bit-exact HEVC Main10 parallel GOP decode</h3>
+<div>
+<label>N <input id=n value=4></label>
+<label>layers <select id=layers><option>bl</option><option>el</option><option>bl,el</option></select></label>
+<label>gopStart <input id=gs value=0></label>
+<label>gopCount <input id=gc value=2></label>
+<label>budget MB <input id=bud value=1536></label>
+<label><input type=checkbox id=hash>hash verify</label>
+<label><input type=checkbox id=pace>pace 23.976</label>
+<label><input type=checkbox id=mem>UA memory</label>
+<button id=go>Run</button>
+</div>
+<p>cores: <span id=hc></span>, crossOriginIsolated: <span id=coi></span></p>
+<pre id=out></pre>
+<script type=module>
+import {run} from './pool.js';
+hc.textContent=navigator.hardwareConcurrency;coi.textContent=self.crossOriginIsolated;
+window.exactRun=run;window.__results=window.__results||[];
+window.exactBatch=async list=>{for(const o of list){const r=await run(o);window.__results.push(r);out.textContent+=JSON.stringify(r)+'\n';}return window.__results;};
+go.onclick=async()=>{
+  const o={n:+n.value,layers:layers.value.split(','),gopStart:+gs.value,gopCount:+gc.value,budgetMB:+bud.value,hash:hash.checked,pace:pace.checked,mem:mem.checked};
+  try{const r=await run(o);window.__results.push(r);out.textContent+=JSON.stringify(r)+'\n';}catch(e){out.textContent+=String(e.stack)+'\n';}
+};
+</script>

@@ -1,0 +1,24 @@
+{
+  "repository": "https://github.com/mozilla/mp4parse-rust",
+  "commit": "d3a9abfc93b22687e5e5cd9df86697adcb7d5887",
+  "crate": "mp4parse0.17.0",
+  "selection": "Isolated derivative of pinned baseline; src/lib.rs and src/boxes.rs modified for native DV HEVC sample-entry recognition. Original file hashes below describe baseline, not derivative.",
+  "files": {
+    "Cargo.toml": "408843ad7a7e9a38482cffd20708b5cab76ed1240712938807626c25cf0572db",
+    "LICENSE": "fab3dd6bdab226f1c08630b1dd917e11fcb4ec5e1e020e2c16f83a0a13863e85",
+    "README.md": "86cb40854b93f988e3a63ce6fe39d2ce95367f8ca301a5ba50676ff98a0ad791",
+    "src/lib.rs": "08cdd9b304a79d8a63f78296a28e472bed52b356a395ba217431bb3c5862d4c6",
+    "src/boxes.rs": "4a8ace30673ec343e4fdcf854ebd6cda6e458aab5aacec6100bfdc3dbb445832",
+    "src/macros.rs": "498bef25c8ea468d8ae0cd89593807d9e9253385cb9456d04f8cb00b721a54cb",
+    "src/unstable.rs": "7c69a030d728bd5635a9511066567175fb88c6fabaf6468962948d7382995dfe",
+    "src/tests.rs": "7c5f0938605a8ca0f44ce9e919d5b57e421cccdee3b073a31bf0f300b8a56cd5",
+    "benches/avif_benchmark.rs": "17105ee0ec4ff0e3eec90699252939101edd5323514ceb404f367e67ef16cf95"
+  },
+  "derivativePatch": {
+    "scope": "Add DVH1/DVHE BoxTypes, map to HEVC, admit hvcC for those entries. No input/sample-entry retagging. DV config retained by bounded outer wrapper.",
+    "files": {
+      "src/lib.rs": "fa6824676926b8803e57d0aa61431859d8284d0bd8a3b6ff35041c80ff316a18",
+      "src/boxes.rs": "bc2db6aa30c90e1c8b79cda40809d09a2dfb3eb0707d8aa9dc2099dce03e2a0e"
+    }
+  }
+}

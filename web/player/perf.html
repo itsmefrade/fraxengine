@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>FraxEngine tier measurement</title>
+<style>
+  body { font: 13px/1.4 system-ui, sans-serif; margin: 12px; background: #0b0c0e; color: #e8e9ec; }
+  #host { width: 960px; height: 540px; background: #000; display: flex; position: relative; }
+  #host canvas, #host video { width: 100%; height: 100%; object-fit: contain; }
+  #host canvas.sub-canvas { position: absolute; inset: 0; pointer-events: none; }
+  pre { white-space: pre-wrap; font: 11px ui-monospace, Menlo, monospace; max-height: 30vh; overflow: auto; }
+</style>
+</head>
+<body>
+<p>Tier measurement. Query: <code>?src=fixtures/x.mkv&amp;label=name&amp;secs=60</code> (see js/perf.js header). Driver: tools/perfrun.py.</p>
+<div id="host"></div>
+<pre id="out"></pre>
+<script type="module" src="js/perf.js"></script>
+</body>
+</html>

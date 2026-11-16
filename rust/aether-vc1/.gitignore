@@ -1,0 +1,7 @@
+/target
+/target-simd
+/fixtures
+*.vc1
+*.yuv
+*.md5
+*.wasm

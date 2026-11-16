@@ -1,0 +1,13 @@
+# Reference test-vector generators for the GPU reconstruction kernels (web/gpu-recon). One binary per stage in src/bin.
+# Standalone (not a member of rust/Cargo.toml); build with CARGO_TARGET_DIR outside the repo, see web/gpu-recon/FORMAT-idct.md.
+[package]
+name = "gpu-recon-ref"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+# None: the inverse transform module is private in the vendored rust_h265, so a marked copy lives in
+# src/ref_inverse_transform.rs (the vendored tree, which G0 edits, is never built from here).
+
+[workspace]

@@ -1,0 +1,8 @@
+<!doctype html><meta charset="utf-8"><title>aether-hevc threads bench</title>
+<script type="module">
+// ?src=/fixtures/fel-p7-bl.hevc&threads=3&workers=7&frames=300&hash=1&single=1 ; result in window.benchResult
+const q = new URLSearchParams(location.search);
+const w = new Worker('./mt-bench-worker.js', {type: 'module'});
+w.onmessage = e => { if (e.data.started) { window.benchStarted = true; return; } window.benchResult = e.data; document.body.textContent = JSON.stringify({...e.data, hashes: e.data.hashes?.length}); };
+w.postMessage({src: q.get('src') || '/fixtures/fel-p7-bl.hevc', threads: +(q.get('threads') || 3), workers: +(q.get('workers') || 0) || undefined, frames: +(q.get('frames') || 300), hash: q.get('hash') === '1', single: q.get('single') === '1', nocopy: q.get('nocopy') === '1'});
+</script>

@@ -1,0 +1,194 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>gpu-recon idct test</title>
+<style>body{font:13px ui-monospace,Menlo,monospace;margin:16px}pre{white-space:pre-wrap}</style>
+<h1>gpu-recon: dequant + inverse transform vs rust_h265</h1>
+<pre id="out">running...</pre>
+<script type="module">
+import { IdctPipeline, TU_WORDS, LIST_WORDS, KIND, packTu, packCoef } from '../idct.mjs';
+import { IDCT_MATRIX } from '../idct.wgsl.mjs';
+
+const out = document.getElementById('out');
+const lines = [];
+const log = s => { lines.push(s); out.textContent = lines.join('\n'); };
+const q = new URLSearchParams(location.search);
+const mode = q.get('mode') || 'all'; // all | verify | perf
+const result = { ok: false };
+window.__idct = result;
+
+async function fetchU32(name) { return new Uint32Array(await (await fetch('vectors/' + name)).arrayBuffer()); }
+
+function storage(device, data, extra = 0) {
+  const b = device.createBuffer({ size: Math.max(16, Math.ceil(data.byteLength / 4) * 4), usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | extra });
+  device.queue.writeBuffer(b, 0, data);
+  return b;
+}
+
+async function readback(device, buf, bytes) {
+  const rb = device.createBuffer({ size: bytes, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
+  const enc = device.createCommandEncoder();
+  enc.copyBufferToBuffer(buf, 0, rb, 0, bytes);
+  device.queue.submit([enc.finish()]);
+  await rb.mapAsync(GPUMapMode.READ);
+  const data = rb.getMappedRange().slice(0);
+  rb.destroy();
+  return data;
+}
+
+async function verify(device, idct) {
+  const [tus, coefs, lists, meta] = await Promise.all([
+    fetchU32('idct-tus.bin'), fetchU32('idct-coefs.bin'), fetchU32('idct-lists.bin'),
+    fetch('vectors/idct-meta.json').then(r => r.json()),
+  ]);
+  const expBuf = await (await fetch('vectors/idct-expected.bin')).arrayBuffer();
+  const expected = new Int16Array(expBuf);
+  const matrix = new Int8Array(await (await fetch('vectors/idct-matrix.bin')).arrayBuffer());
+  let matrixBad = 0;
+  for (let i = 0; i < 1024; i++) if (matrix[i] !== IDCT_MATRIX[i]) matrixBad++;
+  log(`matrix entries differing from rust TRANSFORM: ${matrixBad}`);
+  const nTu = tus.length / TU_WORDS;
+  log(`vectors: ${nTu} TUs, ${coefs.length} coefficient entries, ${expected.length} residual samples (meta ${JSON.stringify(meta)})`);
+
+  const residual = device.createBuffer({ size: expected.length * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
+  const bindings = idct.createBindings({ tus: storage(device, tus), coefs: storage(device, coefs), lists: storage(device, lists), residual });
+  const enc = device.createCommandEncoder();
+  const pass = enc.beginComputePass();
+  idct.dispatch(pass, bindings, nTu);
+  pass.end();
+  device.queue.submit([enc.finish()]);
+  const got = new Int32Array(await readback(device, residual, expected.length * 4));
+
+  const kinds = ['dct', 'dst', 'skip', 'bypass'];
+  const stats = {};
+  let mismatches = 0, badTus = 0;
+  const firstBad = [];
+  for (let t = 0; t < nTu; t++) {
+    const w1 = tus[t * TU_WORDS + 1];
+    const log2 = (w1 & 3) + 2, n = 1 << log2;
+    const kind = (w1 >> 4) & 1 ? 'dst' : (w1 >> 5) & 1 ? 'skip' : (w1 >> 6) & 1 ? 'bypass' : 'dct';
+    const bd = ((w1 >> 8) & 7) + 8;
+    const off = tus[t * TU_WORDS + 4];
+    let bad = 0;
+    for (let i = 0; i < n * n; i++) if (got[off + i] !== expected[off + i]) bad++;
+    for (const key of [`${kind} ${n}x${n}`, `bd${bd}`]) {
+      const s = stats[key] || (stats[key] = { tus: 0, samples: 0, mismatches: 0 });
+      s.tus++; s.samples += n * n; s.mismatches += bad;
+    }
+    if (bad) {
+      badTus++; mismatches += bad;
+      if (firstBad.length < 5) {
+        const c0 = tus[t * TU_WORDS + 2], cnt = tus[t * TU_WORDS + 3];
+        const ents = [];
+        for (let e = 0; e < Math.min(cnt, 4); e++) { const v = coefs[c0 + e]; ents.push(`(${v & 1023},${(v | 0) >> 16})`); }
+        let i = 0; while (got[off + i] === expected[off + i]) i++;
+        firstBad.push(`tu ${t} ${kind} ${n}x${n} bd${bd} qp${(w1 >> 16) & 127} list${(w1 >> 11) & 31} coefs ${cnt} ${ents.join('')} sample ${i}: gpu ${got[off + i]} ref ${expected[off + i]}`);
+      }
+    }
+  }
+  for (const k of Object.keys(stats).sort()) log(`  ${k.padEnd(12)} tus ${String(stats[k].tus).padStart(6)} samples ${String(stats[k].samples).padStart(8)} mismatches ${stats[k].mismatches}`);
+  for (const f of firstBad) log('  first mismatch: ' + f);
+  log(`TOTAL: ${nTu} TUs, ${expected.length} samples, mismatching TUs ${badTus}, mismatching samples ${mismatches}`);
+  Object.assign(result, { tus: nTu, samples: expected.length, mismatchTus: badTus, mismatches, matrixBad, stats });
+  result.ok = mismatches === 0 && matrixBad === 0;
+}
+
+// ---- performance on synthetic 4K frames ----
+function mulberry(seed) { return () => { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+
+function synth(counts, style, seed = 1) {
+  const rnd = mulberry(seed);
+  const order = [];
+  for (const [log2, c] of Object.entries(counts)) for (let i = 0; i < c; i++) order.push(+log2);
+  for (let i = order.length - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); [order[i], order[j]] = [order[j], order[i]]; }
+  const tus = new Uint32Array(order.length * TU_WORDS);
+  const coefList = [];
+  let res = 0;
+  order.forEach((log2, t) => {
+    const n = 1 << log2, area = n * n;
+    let cells;
+    if (style === 'dense') { cells = Array.from({ length: area }, (_, i) => i); }
+    else if (rnd() < 0.25) cells = [0];
+    else {
+      const bx = Math.min(n, 4 * (1 + Math.floor(rnd() * rnd() * n / 4))), by = Math.min(n, 4 * (1 + Math.floor(rnd() * rnd() * n / 4)));
+      const k = Math.max(1, Math.min(bx * by, Math.floor(1 + rnd() * rnd() * area / 5)));
+      const set = new Set([0]);
+      for (let i = 0; i < k; i++) set.add(Math.floor(rnd() * by) * n + Math.floor(rnd() * bx));
+      cells = [...set];
+    }
+    const kind = log2 === 2 && rnd() < 0.3 ? KIND.DST : KIND.DCT;
+    packTu(tus, t * TU_WORDS, { x: (t * 16) & 4095, y: 0, log2, plane: kind === KIND.DST ? 0 : t % 3, kind, bitDepth: 10, listIndex: rnd() < 0.3 ? Math.floor(rnd() * 6) + 6 * (log2 === 5 ? 3 : log2 - 2) : 31, qp: 20 + Math.floor(rnd() * 20) + 12, coefOffset: coefList.length, numCoefs: cells.length, resOffset: res });
+    for (const p of cells) coefList.push(packCoef(p, Math.round((rnd() - 0.5) * (rnd() < 0.9 ? 12 : 600)) || 1));
+    res += area;
+  });
+  return { tus, coefs: Uint32Array.from(coefList), residualSamples: res, count: order.length };
+}
+
+async function perf(device, idct, hasTs) {
+  const lists = new Uint32Array(24 * LIST_WORDS).fill(0x10101010);
+  const scenarios = [
+    ['light 4K frame (15k TUs, sparse)', { 2: 8250, 3: 4500, 4: 1800, 5: 450 }, 'sparse'],
+    ['typical 4K frame (40k TUs, sparse)', { 2: 22000, 3: 12000, 4: 4800, 5: 1200 }, 'sparse'],
+    ['heavy 4K frame (100k TUs, sparse)', { 2: 55000, 3: 30000, 4: 12000, 5: 3000 }, 'sparse'],
+    ['typical count, dense coefficients', { 2: 22000, 3: 12000, 4: 4800, 5: 1200 }, 'dense'],
+    ['all 4x4 (100k TUs, sparse)', { 2: 100000 }, 'sparse'],
+    ['all 32x32 (3k TUs, dense)', { 5: 3000 }, 'dense'],
+  ];
+  result.perf = [];
+  for (const [name, counts, style] of scenarios) {
+    const s = synth(counts, style);
+    const residual = device.createBuffer({ size: s.residualSamples * 4, usage: GPUBufferUsage.STORAGE });
+    const b = idct.createBindings({ tus: storage(device, s.tus), coefs: storage(device, s.coefs), lists: storage(device, lists), residual });
+    // Warm up, then time K back to back dispatches as one submission (GPU time) and N single frame submissions (CPU cost).
+    for (let w = 0; w < 3; w++) { const e = device.createCommandEncoder(); const p = e.beginComputePass(); idct.dispatch(p, b, s.count); p.end(); device.queue.submit([e.finish()]); }
+    await device.queue.onSubmittedWorkDone();
+    const K = 20;
+    let gpuMs = null;
+    let qs, qbuf, rbuf;
+    if (hasTs) {
+      qs = device.createQuerySet({ type: 'timestamp', count: 2 });
+      qbuf = device.createBuffer({ size: 16, usage: GPUBufferUsage.QUERY_RESOLVE | GPUBufferUsage.COPY_SRC });
+      rbuf = device.createBuffer({ size: 16, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
+    }
+    const enc = device.createCommandEncoder();
+    const pass = enc.beginComputePass(hasTs ? { timestampWrites: { querySet: qs, beginningOfPassWriteIndex: 0, endOfPassWriteIndex: 1 } } : {});
+    for (let k = 0; k < K; k++) idct.dispatch(pass, b, s.count);
+    pass.end();
+    if (hasTs) { enc.resolveQuerySet(qs, 0, 2, qbuf, 0); enc.copyBufferToBuffer(qbuf, 0, rbuf, 0, 16); }
+    const t0 = performance.now();
+    device.queue.submit([enc.finish()]);
+    await device.queue.onSubmittedWorkDone();
+    const wallMs = (performance.now() - t0) / K;
+    if (hasTs) { await rbuf.mapAsync(GPUMapMode.READ); const ts = new BigUint64Array(rbuf.getMappedRange()); gpuMs = Number(ts[1] - ts[0]) / 1e6 / K; rbuf.unmap(); }
+    // CPU cost of recording and submitting one picture (no waiting).
+    const N = 300;
+    const c0 = performance.now();
+    for (let i = 0; i < N; i++) { const e = device.createCommandEncoder(); const p = e.beginComputePass(); idct.dispatch(p, b, s.count); p.end(); device.queue.submit([e.finish()]); }
+    const cpuUs = (performance.now() - c0) / N * 1000;
+    await device.queue.onSubmittedWorkDone();
+    const r = { name, tus: s.count, coefs: s.coefs.length, samples: s.residualSamples, wallMsPerDispatch: +wallMs.toFixed(3), gpuMsPerDispatch: gpuMs === null ? null : +gpuMs.toFixed(3), cpuUsPerSubmit: +cpuUs.toFixed(1) };
+    result.perf.push(r);
+    log(`${name}: ${s.count} TUs, ${s.coefs.length} coefs, ${(s.residualSamples / 1e6).toFixed(2)} Msamples: GPU ${r.gpuMsPerDispatch ?? 'n/a'} ms (timestamps), ${r.wallMsPerDispatch} ms (wall/K), CPU record+submit ${r.cpuUsPerSubmit} us`);
+    residual.destroy();
+  }
+}
+
+try {
+  const adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
+  if (!adapter) throw new Error('no WebGPU adapter');
+  const hasTs = adapter.features.has('timestamp-query');
+  const device = await adapter.requestDevice({ requiredFeatures: hasTs ? ['timestamp-query'] : [] });
+  device.addEventListener('uncapturederror', e => log('GPU ERROR: ' + e.error.message));
+  const info = adapter.info || {};
+  log(`adapter: ${info.vendor} ${info.architecture} ${info.description || ''} timestamp-query=${hasTs}`);
+  const idct = new IdctPipeline(device);
+  const info2 = await idct.pipeline.getBindGroupLayout(0) && 'pipeline ok';
+  log(info2);
+  if (mode === 'all' || mode === 'verify') await verify(device, idct);
+  if (mode === 'all' || mode === 'perf') await perf(device, idct, hasTs);
+  result.done = true;
+} catch (e) {
+  log('FAILED: ' + (e.stack || e));
+  result.error = String(e);
+  result.done = true;
+}
+</script>

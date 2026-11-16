@@ -1,0 +1,31 @@
+aether-dtsuhd
+=============
+
+Pure Rust DTS-UHD (DTS:X Profile 2) parser and decoder.
+
+Sources used (all public, downloaded to /tmp/aether-dtsuhd-ref during development):
+
+  * ETSI TS 103 491 V1.2.1 (2019-05), "DTS-UHD Audio Format; Delivery of Channels,
+    Objects and Ambisonic Sound Fields", https://www.etsi.org/deliver/etsi_ts/103400_103499/103491/01.02.01_60/ts_103491v010201p.pdf
+    This is the only normative source. V1.1.1 (2017-04) was read as well to look for the
+    missing compute_unmasked_levels() definition (it is absent there too).
+    ETSI publishes no accompanying zip with tables or reference code for this specification
+    (the deliver directory holds the two PDFs only).
+  * ETSI TS 102 114 V1.6.1 (2019-08), "DTS Coherent Acoustics; Core and Extensions with
+    Additional Profiles", clause 8.5.4: the 128 entry LAR to reflection coefficient table
+    (src/lfe.rs RC_TABLE_Q16), used because TS 103 491 refers to PREDICTOR_QUANTIZATION_COEFF
+    without defining it.
+  * The bitstream of the lab sample "DTS-UHD DTSX P2 Sample.mp4" (sample entry dtsx) was
+    inspected to resolve places where the specification text is wrong or silent; each case is
+    listed in DESIGN.md together with the measurement that supports it.
+
+Not used: any code from FFmpeg, libdts, DTS/Xperi SDKs or leaked material. FFmpeg's DTS-UHD
+demuxer/parser was not consulted. The tables in src/tables_gen.rs are transcribed mechanically
+from the PDF text by tools/gen_tables.py (ETSI copyright applies to the specification text; the
+numeric constants are reproduced because they are required for interoperability).
+
+Licence: LGPL-2.1-or-later, chosen to match the sibling crates of this workspace. The code is
+original; the maintainer may pick another licence.
+
+DTS, DTS:X and DTS-UHD are trademarks of Xperi / DTS, Inc. This project is not affiliated with or
+endorsed by them.

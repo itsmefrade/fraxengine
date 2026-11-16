@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>FraxEngine tier measurement, browser floor</title>
+<style>
+  body { font: 13px/1.4 system-ui, sans-serif; margin: 12px; background: #0b0c0e; color: #e8e9ec; }
+  #host { width: 960px; height: 540px; background: #000; display: flex; }
+  #host video { width: 100%; height: 100%; object-fit: contain; }
+</style>
+</head>
+<body>
+<p>Browser floor: the same file in a plain <code>&lt;video src&gt;</code>, no engine. Query as perf.html (src, label, secs).</p>
+<div id="host"></div>
+<pre id="out"></pre>
+<script>
+// The cost Chrome itself has for a file it can play alone, in the same layout as perf.html, so the engine's numbers have a reference.
+const q = new URLSearchParams(location.search);
+const secs = Number(q.get('secs') || 60);
+const v = document.createElement('video');
+v.muted = false; v.playsInline = true;
+document.getElementById('host').append(v);
+// ?starve=1: a second, hidden <video> on a MediaStream that never carries a frame, next to the playing one. It holds the document's
+// load event back, so the tab keeps loading; the A/B that attributes that cost without any engine code (docs/perf/CORE-V2.md, G).
+// ?starve=late adds it two seconds after the load event instead (a session opened by a click on a loaded page).
+function starve() {
+  const s = document.createElement('video');
+  Object.assign(s, { muted: true, autoplay: true, playsInline: true });
+  s.style.display = 'none';
+  s.srcObject = new MediaStream([new MediaStreamTrackGenerator({ kind: 'video' })]);
+  document.getElementById('host').append(s);
+}
+if (q.get('starve') === 'late') addEventListener('load', () => setTimeout(starve, 2000));
+else if (q.has('starve')) starve();
+let loadEventMs = null;
+addEventListener('load', () => { loadEventMs = Math.round(performance.now()); });
+const t0 = performance.now();
+const res = { label: q.get('label') || 'floor', src: q.get('play') ? 'play:' + q.get('play') : q.get('src'), floor: true, wall: { open: Date.now() }, errors: [], route: { video: 'plain video element (floor)', quality: 'none', audio: 'browser' } };
+v.addEventListener('error', () => { res.errors.push(String(v.error && v.error.message)); post(); });
+let posted = false;
+function post() {
+  if (posted) return; posted = true;
+  res.loadEventMs = loadEventMs;
+  document.getElementById('out').textContent = JSON.stringify(res, null, 1);
+  fetch('/results', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ test: 'perf', result: res }) });
+}
+v.requestVideoFrameCallback(() => { res.firstFrameMs = Math.round(performance.now() - t0); });
+v.addEventListener('playing', () => {
+  if (res.wall.steadyStart) return;
+  res.playingMs = Math.round(performance.now() - t0);
+  res.wall.steadyStart = Date.now(); res.loadedAtSteady = document.readyState === 'complete';
+  const a = v.getVideoPlaybackQuality(), c0 = v.currentTime, w0 = performance.now();
+  setTimeout(() => {
+    const b = v.getVideoPlaybackQuality();
+    res.wall.steadyEnd = res.wall.end = Date.now();
+    res.steady = { wallS: (performance.now() - w0) / 1000, clockS: v.currentTime - c0, shown: b.totalVideoFrames - a.totalVideoFrames - (b.droppedVideoFrames - a.droppedVideoFrames),
+      dropped: b.droppedVideoFrames - a.droppedVideoFrames, av: {}, audio: {}, mainThread: {} };
+    seeks().then(post);
+  }, secs * 1000);
+});
+// The same seek plan as perf.html: time to the first picture at or after the target.
+async function seeks() {
+  if (q.get('seeks') === '0') return;
+  res.seeks = [];
+  if (q.has('seekat')) await new Promise(r => { const i = setInterval(() => { if (v.currentTime >= Number(q.get('seekat')) || v.ended) { clearInterval(i); r(); } }, 5); });
+  const dur = v.duration, clampT = t => Math.max(0.5, Math.min(dur - 8, t));
+  const plan = [['near', 'forward 10 s', () => v.currentTime + 10], ['near', 'back 5 s', () => v.currentTime - 5], ['near', 'forward 30 s', () => v.currentTime + 30], ['far', 'forward', () => dur * 0.8], ['far', 'back', () => dur * 0.15],
+    ['far', 'forward', () => dur * 0.55], ['far', 'back', () => dur * 0.05], ['far', 'forward', () => dur * 0.7], ['start', 'back to 0', () => 0]];
+  for (const [kind, dir, where] of plan) {
+    const target = kind === 'start' ? 0 : clampT(where()), ts = performance.now();
+    let seekedMs = null, frameS = null;
+    v.addEventListener('seeked', () => { seekedMs = Math.round(performance.now() - ts); }, { once: true });
+    const ms = await new Promise(resolve => {
+      const to = setTimeout(() => resolve(null), 30000);
+      const cb = (n, md) => { const d = md.mediaTime - target; if (d >= -0.05 && (d < 0.1 || (d < 3 && !v.seeking))) {   // as perf.js
+        clearTimeout(to); frameS = md.mediaTime; resolve(Math.round(performance.now() - ts)); } else v.requestVideoFrameCallback(cb); };
+      v.requestVideoFrameCallback(cb);
+      v.currentTime = target;
+    });
+    const a = v.getVideoPlaybackQuality();
+    await new Promise(r => setTimeout(r, 2000));
+    const b = v.getVideoPlaybackQuality();
+    res.seeks.push({ kind, dir, targetS: +target.toFixed(1), playingMs: ms, frameMs: ms, seekedMs, frameAfterTargetMs: frameS == null ? null : +((frameS - target) * 1000).toFixed(1), ok: ms != null,
+      shown2s: b.totalVideoFrames - a.totalVideoFrames - (b.droppedVideoFrames - a.droppedVideoFrames), dropped2s: b.droppedVideoFrames - a.droppedVideoFrames, advancedS: +(v.currentTime - target).toFixed(2) });
+  }
+}
+(async () => {
+  // ?play=tv/123 asks a same-origin site backend for the title's source, as perf.html does
+  v.src = q.get('play') ? (await (await fetch(`/api/play/${q.get('play')}?season=${q.get('season') || 1}&episode=${q.get('episode') || 1}&channel=${q.get('channel') || 'jellyfin'}`)).json()).native.source : q.get('src');
+  v.play().catch(e => { res.errors.push(String(e)); post(); });
+})();
+</script>
+</body>
+</html>

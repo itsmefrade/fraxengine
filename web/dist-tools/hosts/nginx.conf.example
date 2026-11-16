@@ -1,0 +1,25 @@
+# Server block fragment. "always" keeps the headers on 206/304/404 responses too (Range requests are 206).
+server {
+    listen 443 ssl;
+    server_name player.example.org;
+    root /var/www/aether-web;           # the contents of web/dist
+
+    add_header Cross-Origin-Opener-Policy   "same-origin"   always;
+    add_header Cross-Origin-Embedder-Policy "require-corp"  always;
+    add_header Cross-Origin-Resource-Policy "same-origin"   always;
+    add_header X-Content-Type-Options       "nosniff"       always;
+
+    types { application/wasm wasm; text/javascript js mjs; }
+
+    location /assets/ {
+        # add_header in a location replaces the inherited ones, so repeat them.
+        add_header Cross-Origin-Opener-Policy   "same-origin"   always;
+        add_header Cross-Origin-Embedder-Policy "require-corp"  always;
+        add_header Cross-Origin-Resource-Policy "same-origin"   always;
+        add_header Cache-Control "public, max-age=31536000, immutable" always;
+    }
+    location = /index.html { add_header Cache-Control "no-cache" always;
+        add_header Cross-Origin-Opener-Policy "same-origin" always;
+        add_header Cross-Origin-Embedder-Policy "require-corp" always; }
+    gzip on; gzip_types application/wasm text/javascript text/css application/json;
+}

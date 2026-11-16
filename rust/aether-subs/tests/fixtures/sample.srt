@@ -1,0 +1,16 @@
+1
+00:00:01,000 --> 00:00:03,500
+Hello, <i>world</i>!
+
+2
+00:00:04,000 --> 00:00:06,250
+<b>Two</b> lines
+second line with <font color="#ff8000">colour</font>
+
+3
+00:00:07,000 --> 00:00:08,000
+{\an8}Top of the screen
+
+4
+00:00:09,100 --> 00:00:12,000
+Café &amp; <u>underline</u> <s>strike</s>

@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Jellyfin client smoke</title>
+<style>body { margin: 0; background: #000; color: #ccc; font: 12px monospace; } iframe { width: 1280px; height: 720px; border: 0; display: block; } pre { margin: 4px; }</style>
+</head>
+<body>
+<iframe id="app" src="/app/"></iframe>
+<pre id="log"></pre>
+<script type="module">
+// Drives the real client in the iframe against the fake server (test/fake-jellyfin.mjs), then POSTs the result to /results.
+// The credentials are the fake server's fixture user, not a real account.
+const logEl = document.getElementById('log');
+const log = t => { logEl.textContent += t + '\n'; };
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const frame = document.getElementById('app');
+const w = () => frame.contentWindow, d = () => frame.contentDocument;
+async function until(fn, ms, what) {
+  const end = performance.now() + ms;
+  for (;;) { let v; try { v = await fn(); } catch { v = null; } if (v) return v; if (performance.now() > end) throw new Error('timeout: ' + what); await sleep(100); }
+}
+const config = c => fetch('/__fake/config', { method: 'POST', body: JSON.stringify(c) }).then(r => r.json());
+const fakeState = () => fetch('/__fake/state').then(r => r.json());
+const visible = id => d()?.getElementById(id) && !d().getElementById(id).hidden;
+const click = sel => d().querySelector(sel).click();
+const back = async () => { d().getElementById('pback').click(); await until(() => !visible('player'), 5000, 'left the player'); };
+
+async function playFor(seconds) {
+  const s = await until(() => { const s = w().fraxJellyfin.session; return s && s.state === 'playing' ? s : null; }, 30000, 'playing');
+  const t0 = s.currentTimeUs();
+  await sleep(seconds * 1000);
+  const snap = s.snapshot();
+  return { state: snap.state, advancedS: (s.currentTimeUs() - t0) / 1e6, dropped: snap.video?.dropped ?? null, shown: snap.video?.shown ?? null, decoder: snap.video?.decoder?.codec ?? null, audioRoute: snap.audioRoute, sourceMode: snap.source?.mode, error: snap.error };
+}
+
+async function expectFailure(itemId) {
+  d().getElementById('pstatus').textContent = '';
+  w().fraxJellyfin.play(itemId);
+  const text = await until(() => { const t = d().getElementById('pstatus').textContent; return /failed/i.test(t) ? t : null; }, 40000, 'failure shown');
+  await back();
+  return text;
+}
+
+const out = { ok: false };
+try {
+  await config({ stream: 'direct', cors: true, range: true, exposeContentRange: true });
+  await until(() => visible('login'), 10000, 'login view');
+  out.isolated = w().crossOriginIsolated;
+  d().getElementById('username').value = 'demo';
+  d().getElementById('password').value = 'demo-pass';
+  d().getElementById('loginform').requestSubmit();
+  await until(() => d().querySelector('.tile[data-id="view-movies"]'), 10000, 'libraries');
+  click('.tile[data-id="view-movies"]');
+  await until(() => d().querySelector('.tile[data-id="movie-1"]'), 10000, 'movie tile');
+  out.listed = [...d().querySelectorAll('.tile')].map(t => t.title);
+  click('.tile[data-id="movie-1"]');
+  await until(() => visible('detail'), 5000, 'detail');
+  d().getElementById('dplay').click();
+  log('playing same-origin for 10 s');
+  out.direct = await playFor(10);
+  await back();
+  await until(() => visible('detail') && visible('dresume'), 10000, 'resume button');
+  out.resumeLabel = d().getElementById('dresume').textContent;
+  let st = await fakeState();
+  out.reports = st.events.map(e => e.type);
+  out.tokenInUrl = st.requests.some(r => /api_key|Token=/i.test(r.url));
+  out.streamRequestsWithAuth = st.requests.filter(r => r.url.includes('/stream?')).every(r => r.auth);
+
+  log('redirect to another origin');
+  await config({ stream: 'redirect' });
+  w().fraxJellyfin.play('episode-1');
+  out.redirect = await playFor(3);
+  await back();
+  st = await fakeState();
+  out.redirectMediaRequests = st.mediaRequests.filter(r => r.method === 'GET').length;
+  out.authorizationLeakedToMediaHost = st.mediaRequests.some(r => r.authorization);
+
+  log('media host that hides Content-Range (size from the media source)');
+  await config({ stream: 'redirect', exposeContentRange: false });
+  w().fraxJellyfin.play('episode-1');
+  out.hiddenContentRange = await playFor(2);
+  await back();
+  await config({ exposeContentRange: true });
+  log('media host without Range');
+  await config({ stream: 'redirect', cors: true, range: false });
+  out.noRange = await expectFailure('episode-1');
+  log('media host without CORS');
+  await config({ stream: 'redirect', cors: false, range: true });
+  out.noCors = await expectFailure('episode-1');
+  await config({ stream: 'direct', cors: true, range: true });
+  out.ok = out.direct.state === 'playing' && out.direct.dropped === 0 && out.direct.advancedS > 9 && out.redirect.advancedS > 2 && out.hiddenContentRange.advancedS > 1 && !out.tokenInUrl && !out.authorizationLeakedToMediaHost && /CORS/.test(out.noCors) && !/Range/.test(out.noCors) && /Range/.test(out.noRange) && /^Resume from/.test(out.resumeLabel);
+} catch (e) { out.error = String(e.stack || e); try { const st = await fakeState(); out.events = st.events.map(e => `${e.type} ${e.body?.ItemId} ${e.body?.PositionTicks}`); out.pstatus = d().getElementById('pstatus').textContent; out.views = [...d().querySelectorAll('.view')].filter(v => !v.hidden).map(v => v.id); } catch {} }
+log(JSON.stringify(out, null, 2));
+await fetch('/results', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(out) });
+</script>
+</body>
+</html>

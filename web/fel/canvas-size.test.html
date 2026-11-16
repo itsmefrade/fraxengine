@@ -1,0 +1,54 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>HDR canvas size probe</title>
+<style>body{font:13px ui-monospace,monospace;margin:12px}canvas{width:480px;background:#222}</style>
+<pre id="log"></pre>
+<div id="host"></div>
+<script type="module">
+// Isolates the "4K rgba16float extended canvas freezes Chrome" report: size, format, tone mapping, thread.
+// window.runCanvasTest({width, height, format, tone, colorSpace, worker, frames}) resolves with timings.
+// The page keeps a heartbeat so a stalled main thread shows up as a gap, the caller polls window.__beat.
+window.__beat = 0; setInterval(() => window.__beat++, 100);
+const code = `
+export async function render({canvas, width, height, format, tone, colorSpace, frames}) {
+  const adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
+  const device = await adapter.requestDevice();
+  canvas.width = width; canvas.height = height;
+  const ctx = canvas.getContext('webgpu');
+  const cfg = { device, format, colorSpace, alphaMode: 'opaque', usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC };
+  if (tone) cfg.toneMapping = { mode: tone };
+  ctx.configure(cfg);
+  const times = [];
+  for (let i = 0; i < frames; i++) {
+    const t = performance.now();
+    const enc = device.createCommandEncoder();
+    const pass = enc.beginRenderPass({ colorAttachments: [{ view: ctx.getCurrentTexture().createView(), clearValue: { r: 2 + (i % 4) * 0.5, g: 1.5, b: 1, a: 1 }, loadOp: 'clear', storeOp: 'store' }] });
+    pass.end();
+    device.queue.submit([enc.finish()]);
+    await device.queue.onSubmittedWorkDone();
+    await new Promise(r => (self.requestAnimationFrame ?? (f => setTimeout(f, 16)))(r));
+    times.push(+(performance.now() - t).toFixed(1));
+  }
+  const c = ctx.getConfiguration?.();
+  return { times, config: c && { format: c.format, colorSpace: c.colorSpace, tone: c.toneMapping?.mode } };
+}`;
+const url = URL.createObjectURL(new Blob([code], { type: 'text/javascript' }));
+window.runCanvasTest = async o => {
+  const opts = { width: 1920, height: 1080, format: 'rgba16float', tone: 'extended', colorSpace: 'display-p3', worker: false, frames: 20, ...o };
+  const t0 = performance.now();
+  let result;
+  if (opts.worker) {
+    const canvas = document.createElement('canvas'); canvas.style.width = '480px'; document.getElementById('host').append(canvas);
+    const off = canvas.transferControlToOffscreen();
+    const w = new Worker(URL.createObjectURL(new Blob([`import {render} from '${url}'; onmessage = async e => { try { postMessage(await render(e.data)); } catch (x) { postMessage({error: String(x)}); } }`], { type: 'text/javascript' })), { type: 'module' });
+    result = await new Promise(r => { w.onmessage = e => r(e.data); w.postMessage({ ...opts, canvas: off }, [off]); });
+  } else {
+    const { render } = await import(url);
+    const canvas = document.createElement('canvas'); canvas.style.width = '480px'; document.getElementById('host').append(canvas);
+    result = await render({ ...opts, canvas });
+  }
+  result.totalMs = +(performance.now() - t0).toFixed(0);
+  result.opts = opts; delete result.opts.canvas;
+  return (window.__result = result);
+};
+</script>

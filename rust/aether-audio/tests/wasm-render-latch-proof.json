@@ -1,0 +1,38 @@
+{
+  "schema": "aether-wasm-render-latch-test-v1",
+  "status": "pass",
+  "candidateSha256": "08703034d7ee4bb6d08691b94e9e6f9161e0a2ce3d38c34fce503a5fc1b00485",
+  "baselineSha256": "c39bcaf6f460f3a4086ae9420c7218531857506c93ece13d3220fede4056dae8",
+  "inputPrefixBytes": 65536,
+  "inputPrefixSha256": "e7947b32ac5c6fb5e6eb928d2ad17bb789528ef57fb5f0a1f0695d9a500732ad",
+  "baseline": {
+    "firstFrameOffset": 0,
+    "failedConsumedFrameOffset": 40,
+    "renderError": 205,
+    "disableRenderStatus": 0,
+    "nextStatus": 0,
+    "nextFrameOffset": 80
+  },
+  "candidate": {
+    "renderError": 205,
+    "repeatedPullStatus": 205,
+    "pushStatus": 205,
+    "disableRenderStatus": 205,
+    "pendingUnchanged": true,
+    "outputBytesUnchanged": true,
+    "labelsAndMetadataCleared": true,
+    "failedResetRetainsError": true,
+    "secondInstanceUnaffected": true,
+    "explicitResetRestoresFrameOffset": 0
+  },
+  "scope": "Actual Node WebAssembly using a short local TrueHD prefix; intentional late renderer configuration provokes real missing-initial-metadata error. Not browser, full clip, physical audio, or untrusted-input certification.",
+  "sourceHashes": {
+    "rust/aether-audio/src/wasm.rs": "f1c20edaaa34d63263ab3243af5a60ab29eb735237b82d582316b158b6414d6e",
+    "rust/aether-audio/src/wasm_latch.rs": "ce8d855badb4d261b870bb19125df5bedfaa57da8dc7918a828cfef50a540d2f",
+    "rust/aether-audio/src/render.rs": "22b4230b3279935a217f1e505a60618b9698014bec42df5b25b84e75a6658517",
+    "rust/aether-audio/tests/wasm-render-latch.test.mjs": "f515778d87c72f7dd17761ce0ff120a7f9782104d28625572548077e162d79de",
+    "rust/Cargo.lock": "09f04ee507456f8150f604736c1e0b31b1f1b0c7c51313893697a932404dfad0"
+  },
+  "candidateArtifact": "local-only /tmp/aether_audio_render_latch_candidate.wasm",
+  "build": "wasm32-unknown-unknown release, max memory 268435456 bytes, stack 8388608 bytes; frozen published binaries unchanged"
+}

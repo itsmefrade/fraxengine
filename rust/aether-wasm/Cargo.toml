@@ -1,0 +1,18 @@
+[package]
+name = "aether-wasm"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.89"
+license = "LGPL-3.0-only"
+description = "Raw C ABI over aether-demux, aether-dovi, aether-audio and aether-player for the browser"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+aether-demux = { path = "../aether-demux" }
+aether-dovi = { path = "../aether-dovi" }
+aether-audio = { path = "../aether-audio", default-features = false }
+aether-player = { path = "../aether-player" }
+aether-subs = { path = "../aether-subs" }
+aether-vc1 = { path = "../aether-vc1" }

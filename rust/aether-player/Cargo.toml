@@ -1,0 +1,10 @@
+[package]
+name = "aether-player"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+license = "LGPL-3.0-only"
+description = "Session epoch state machine, rational media clock and bounded video scheduler"
+
+[lib]
+crate-type = ["rlib"]

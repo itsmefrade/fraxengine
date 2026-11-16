@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GPU SAO test</title>
+<style>
+  :root { --bg: #fff; --fg: #111; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #111; --fg: #ddd; } }
+  body { background: var(--bg); color: var(--fg); font: 13px ui-monospace, monospace; margin: 16px; }
+  pre { white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<pre id="log">running...</pre>
+<script type="module">
+// Bit exactness of sao.wgsl.mjs against rust_h265 (vectors from rust/gpu-recon-ref-filters, written to
+// web/results/gpu-recon-filters). Per case: SAO alone (rust's deblocked picture in, rust's final picture
+// expected), then the whole chain on the GPU (unfiltered picture, deblock, SAO into a second buffer).
+// Query: ?cases=<substring filter>&iters=<timing iterations>. Result in window.result.
+import { createDeblock, makeParams, pictureWords } from '../deblock.mjs';
+import { createSao } from '../sao.mjs';
+
+const q = new URLSearchParams(location.search);
+const DATA = '../../results/gpu-recon-filters/';
+const ITERS = Number(q.get('iters') ?? 30);
+const filter = q.get('cases') ?? '';
+const logEl = document.getElementById('log');
+const lines = [];
+const log = (s) => { lines.push(s); logEl.textContent = lines.join('\n'); };
+
+async function loadCase(file) {
+  const buf = await (await fetch(DATA + file)).arrayBuffer();
+  const dv = new DataView(buf);
+  if (dv.getUint32(0, true) !== 0x31465247) throw new Error('bad magic ' + file);
+  const hlen = dv.getUint32(4, true);
+  const head = JSON.parse(new TextDecoder().decode(new Uint8Array(buf, 8, hlen)));
+  const base = 8 + hlen;
+  const sec = {};
+  for (const [k, [off, len]] of Object.entries(head.sections)) sec[k] = new Uint32Array(buf, base + off, len / 4);
+  return { head, sec };
+}
+
+function gpuBuffer(device, data, usage) {
+  const b = device.createBuffer({ size: Math.max(16, data.byteLength), usage: usage | GPUBufferUsage.COPY_DST });
+  device.queue.writeBuffer(b, 0, data);
+  return b;
+}
+
+async function readBack(device, buf, bytes) {
+  const rb = device.createBuffer({ size: bytes, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+  const enc = device.createCommandEncoder();
+  enc.copyBufferToBuffer(buf, 0, rb, 0, bytes);
+  device.queue.submit([enc.finish()]);
+  await rb.mapAsync(GPUMapMode.READ);
+  const out = new Uint32Array(rb.getMappedRange().slice(0));
+  rb.unmap();
+  rb.destroy();
+  return out;
+}
+
+// Compares every sample inside the picture, and the stride padding words (SAO copies them).
+function compare(params, got, exp) {
+  const [w, h, sy, sc, offCb, offCr] = params;
+  const planes = [[0, w, h, sy], [offCb, w >> 1, h >> 1, sc], [offCr, w >> 1, h >> 1, sc]];
+  let mism = 0, n = 0, pad = 0;
+  const first = [];
+  planes.forEach(([off, pw, ph, stride], c) => {
+    for (let y = 0; y < ph; y++) {
+      const row = off + (y * stride) / 2;
+      for (let x = 0; x < stride; x++) {
+        const sh = (x & 1) * 16;
+        const a = (got[row + (x >> 1)] >>> sh) & 0xffff;
+        const b = (exp[row + (x >> 1)] >>> sh) & 0xffff;
+        if (x >= pw) { if (a !== b) pad++; continue; }
+        n++;
+        if (a !== b) { mism++; if (first.length < 8) first.push({ c, x, y, got: a, exp: b }); }
+      }
+    }
+  });
+  return { mism, n, pad, first };
+}
+
+async function main() {
+  const adapter = await navigator.gpu.requestAdapter();
+  const hasTs = adapter.features.has('timestamp-query');
+  const device = await adapter.requestDevice({
+    requiredFeatures: hasTs ? ['timestamp-query'] : [],
+    requiredLimits: { maxStorageBufferBindingSize: adapter.limits.maxStorageBufferBindingSize, maxBufferSize: adapter.limits.maxBufferSize },
+  });
+  device.addEventListener('uncapturederror', (e) => log('GPU error: ' + e.error.message));
+  const db = createDeblock(device);
+  const sao = createSao(device);
+  for (const m of [db.module, sao.module]) for (const msg of (await m.getCompilationInfo()).messages) log(`wgsl ${msg.type} ${msg.lineNum}:${msg.linePos} ${msg.message}`);
+
+  const index = (await (await fetch(DATA + 'index.json')).json()).filter((c) => c.name.includes(filter));
+  const S = GPUBufferUsage.STORAGE;
+  const res = { cases: 0, samples: 0, mismatches: 0, padMismatches: 0, chainSamples: 0, chainMismatches: 0, changedBySao: 0, paramMismatch: 0, failed: [], timing: null };
+  let timingCase = null;
+  for (const entry of index) {
+    const { head, sec } = await loadCase(entry.file);
+    const params = sec.params;
+    const i32 = new Int32Array(params.buffer, params.byteOffset, 16);
+    const mine = makeParams({ ...head, cbQpOffset: i32[10], crQpOffset: i32[11] });
+    if (mine.some((v, i) => v !== params[i])) res.paramMismatch++;
+    const words = pictureWords(params);
+    const bufs = {
+      params: gpuBuffer(device, params, GPUBufferUsage.UNIFORM),
+      deblocked: gpuBuffer(device, sec.deblocked, S | GPUBufferUsage.COPY_SRC),
+      picture: gpuBuffer(device, sec.input, S | GPUBufferUsage.COPY_SRC),
+      out: device.createBuffer({ size: words * 4, usage: S | GPUBufferUsage.COPY_SRC }),
+      out2: device.createBuffer({ size: words * 4, usage: S | GPUBufferUsage.COPY_SRC }),
+      map: gpuBuffer(device, sec.map, S),
+      dbCtb: gpuBuffer(device, sec.deblockCtb, S),
+      saoCtb: gpuBuffer(device, sec.saoCtb, S),
+    };
+    const bgSao = sao.bindGroup({ params: bufs.params, src: bufs.deblocked, dst: bufs.out, map: bufs.map, ctb: bufs.saoCtb });
+    const bgDb = db.bindGroup({ params: bufs.params, picture: bufs.picture, map: bufs.map, ctb: bufs.dbCtb });
+    const bgChain = sao.bindGroup({ params: bufs.params, src: bufs.picture, dst: bufs.out2, map: bufs.map, ctb: bufs.saoCtb });
+    const enc = device.createCommandEncoder();
+    let pass = enc.beginComputePass();
+    sao.encode(pass, bgSao, params);
+    pass.end();
+    pass = enc.beginComputePass();
+    db.encode(pass, bgDb, head.width, head.height);
+    sao.encode(pass, bgChain, params);
+    pass.end();
+    device.queue.submit([enc.finish()]);
+    const r = compare(params, await readBack(device, bufs.out, words * 4), sec.final);
+    const rc = compare(params, await readBack(device, bufs.out2, words * 4), sec.final);
+    res.cases++;
+    res.samples += r.n;
+    res.mismatches += r.mism;
+    res.padMismatches += r.pad + rc.pad;
+    res.chainSamples += rc.n;
+    res.chainMismatches += rc.mism;
+    res.changedBySao += head.saoChanged;
+    log(`${head.name.padEnd(22)} ${head.width}x${head.height} bd ${head.bitDepthY}/${head.bitDepthC} ctb ${1 << head.log2Ctb} nf ${head.anyNoFilter} samples ${r.n} changed-by-sao ${head.saoChanged} mismatches ${r.mism} chain-mismatches ${rc.mism}`);
+    if (r.mism || rc.mism) { res.failed.push({ name: head.name, first: r.first, chain: rc.first }); log('  first: ' + JSON.stringify(r.first) + ' chain: ' + JSON.stringify(rc.first)); }
+    if (head.width === 3840) timingCase = { head, sec, bufs, bgSao, bgDb, bgChain, words };
+    else Object.values(bufs).forEach((b) => b.destroy());
+  }
+
+  if (timingCase && hasTs && ITERS > 0) {
+    // GPU time on the 4K case from timestamp queries around each compute pass: SAO alone, and deblock + SAO in
+    // one pass (the unfiltered input is restored before every chain run, outside the timed pass).
+    const { head, sec, bufs, bgSao, bgDb, bgChain, words } = timingCase;
+    const pristine = gpuBuffer(device, sec.input, GPUBufferUsage.COPY_SRC);
+    const qs = device.createQuerySet({ type: 'timestamp', count: 4 * ITERS });
+    const qb = device.createBuffer({ size: 32 * ITERS, usage: GPUBufferUsage.QUERY_RESOLVE | GPUBufferUsage.COPY_SRC });
+    const enc = device.createCommandEncoder();
+    for (let i = 0; i < ITERS; i++) {
+      let pass = enc.beginComputePass({ timestampWrites: { querySet: qs, beginningOfPassWriteIndex: 4 * i, endOfPassWriteIndex: 4 * i + 1 } });
+      sao.encode(pass, bgSao, sec.params);
+      pass.end();
+      enc.copyBufferToBuffer(pristine, 0, bufs.picture, 0, words * 4);
+      pass = enc.beginComputePass({ timestampWrites: { querySet: qs, beginningOfPassWriteIndex: 4 * i + 2, endOfPassWriteIndex: 4 * i + 3 } });
+      db.encode(pass, bgDb, head.width, head.height);
+      sao.encode(pass, bgChain, sec.params);
+      pass.end();
+    }
+    enc.resolveQuerySet(qs, 0, 4 * ITERS, qb, 0);
+    device.queue.submit([enc.finish()]);
+    const ts = new BigUint64Array((await readBack(device, qb, 32 * ITERS)).buffer);
+    const stat = (k) => {
+      const ms = [];
+      for (let i = 0; i < ITERS; i++) ms.push(Number(ts[4 * i + k + 1] - ts[4 * i + k]) / 1e6);
+      ms.sort((a, b) => a - b);
+      return { medianMs: +ms[ms.length >> 1].toFixed(3), minMs: +ms[0].toFixed(3), maxMs: +ms[ms.length - 1].toFixed(3) };
+    };
+    const rc = compare(sec.params, await readBack(device, bufs.out2, words * 4), sec.final);
+    res.timing = { case: head.name, iters: ITERS, sao: stat(0), deblockPlusSao: stat(2), chainMismatchesAfterTiming: rc.mism };
+    log(`timing ${head.name}: SAO ${JSON.stringify(res.timing.sao)}, deblock+SAO ${JSON.stringify(res.timing.deblockPlusSao)} (${ITERS} runs), mismatches after ${rc.mism}`);
+  }
+  log(`TOTAL cases ${res.cases} samples ${res.samples} mismatches ${res.mismatches}, chain samples ${res.chainSamples} chain mismatches ${res.chainMismatches}, padding mismatches ${res.padMismatches} (SAO changed ${res.changedBySao} samples), param mismatches ${res.paramMismatch}`);
+  window.result = res;
+}
+main().catch((e) => { log('ERROR ' + (e.stack || e)); window.result = { error: String(e) }; });
+</script>
+</body>
+</html>

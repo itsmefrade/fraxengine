@@ -1,0 +1,14 @@
+[package]
+name = "aether-vc1"
+version = "0.1.0"
+edition = "2021"
+license = "LGPL-2.1-or-later"
+description = "Pure Rust SMPTE 421M (VC-1) Advanced Profile video decoder for WASM/browser use"
+publish = false
+
+[lib]
+crate-type = ["rlib", "cdylib"]
+
+[features]
+default = []
+diag = []

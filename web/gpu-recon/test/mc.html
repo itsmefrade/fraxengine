@@ -1,0 +1,286 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>GPU MC test</title>
+<style>body { font: 13px/1.4 ui-monospace, monospace; margin: 16px; background: #fff; color: #111; } pre { white-space: pre-wrap; }</style>
+</head>
+<body>
+<h3>HEVC motion compensation (WGSL) against rust_h265</h3>
+<p>Vectors: <code>rust/gpu-recon-ref-mc</code> writes <code>web/gpu-recon/test/data-mc/mc-*.bin</code>.
+Query: <code>?cases=bd8,bd10</code> (default all), <code>&amp;bench=1</code> (4K timing), <code>&amp;nocheck=1</code>, <code>&amp;general=1</code> (bench without the small-PU range), <code>&amp;flipNarrowing=1</code> (negative control: the other build's narrowing must mismatch).
+Result in <code>window.mcResult</code>.</p>
+<pre id="log"></pre>
+<script type="module">
+import { GpuMc, pictureLayout, partitionRecords, MC_RECORD_WORDS, MC_WEIGHT_WORDS } from '../mc.mjs';
+
+const q = new URLSearchParams(location.search);
+const logEl = document.getElementById('log');
+const log = (s) => { logEl.textContent += s + '\n'; console.log(s); };
+const ALL = ['bd8', 'bd10', 'bd10hp', 'bd12', 'bd8c10'];
+const names = q.get('cases') ? q.get('cases').split(',') : [...ALL, ...ALL.map((n) => n + '-scalar')];
+
+async function device() {
+  const adapter = await navigator.gpu.requestAdapter();
+  const ts = adapter.features.has('timestamp-query');
+  const dev = await adapter.requestDevice({
+    requiredFeatures: ts ? ['timestamp-query'] : [],
+    requiredLimits: {
+      maxStorageBufferBindingSize: adapter.limits.maxStorageBufferBindingSize,
+      maxBufferSize: adapter.limits.maxBufferSize,
+    },
+  });
+  dev.addEventListener('uncapturederror', (e) => log('GPU ERROR ' + e.error.message));
+  return { dev, ts };
+}
+
+function buf(dev, data, usage, size) {
+  const b = dev.createBuffer({ size: Math.max(16, size ?? data.byteLength), usage: usage | GPUBufferUsage.COPY_DST });
+  if (data) dev.queue.writeBuffer(b, 0, data);
+  return b;
+}
+
+async function readBack(dev, src, offsetBytes, sizeBytes) {
+  const rb = dev.createBuffer({ size: sizeBytes, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+  const enc = dev.createCommandEncoder();
+  enc.copyBufferToBuffer(src, offsetBytes, rb, 0, sizeBytes);
+  dev.queue.submit([enc.finish()]);
+  await rb.mapAsync(GPUMapMode.READ);
+  const out = new Uint32Array(rb.getMappedRange().slice(0));
+  rb.destroy();
+  return out;
+}
+
+function parse(ab) {
+  const u = new Uint32Array(ab);
+  const h = u.subarray(0, 16);
+  if (h[0] !== 0x3156434d) throw new Error('bad magic');
+  const [, width, height, strideY, strideC, bdY, bdC, flags, numSlots, curSlot, slotWords, puCount, wtCount, offCb, offCr, predicted] = h;
+  let o = 16;
+  const arena = u.subarray(o, o + numSlots * slotWords); o += numSlots * slotWords;
+  const pus = u.subarray(o, o + puCount * MC_RECORD_WORDS); o += puCount * MC_RECORD_WORDS;
+  const wts = u.subarray(o, o + wtCount * MC_WEIGHT_WORDS); o += wtCount * MC_WEIGHT_WORDS;
+  const expected = u.subarray(o, o + slotWords);
+  return { width, height, strideY, strideC, bdY, bdC, flags, numSlots, curSlot, slotWords, puCount, offCb, offCr, predicted, arena, pus, wts, expected };
+}
+
+function compare(c, got) {
+  const L = pictureLayout(c.width, c.height);
+  const planes = [[0, L.strideY, c.height], [L.offCb, L.strideC, c.height >> 1], [L.offCr, L.strideC, c.height >> 1]];
+  const mism = [0, 0, 0];
+  const first = [];
+  let samples = 0;
+  planes.forEach(([off, stride, rows], p) => {
+    for (let i = 0; i < (stride * rows) / 2; i++) {
+      const a = got[off + i], b = c.expected[off + i];
+      samples += 2;
+      if (a === b) continue;
+      for (let e = 0; e < 2; e++) {
+        const ga = (a >>> (16 * e)) & 0xffff, eb = (b >>> (16 * e)) & 0xffff;
+        if (ga !== eb) {
+          mism[p]++;
+          if (first.length < 8) { const s = 2 * i + e; first.push({ plane: p, x: s % stride, y: Math.floor(s / stride), got: ga, exp: eb }); }
+        }
+      }
+    }
+  });
+  return { samples, mismatches: mism[0] + mism[1] + mism[2], byPlane: mism, first };
+}
+
+// mode: 'split' (small range + general range), 'general' (every record through `main`); separateDst: binding mode.
+async function runCase(dev, name, separateDst, mode) {
+  const r = await fetch(`data-mc/mc-${name}.bin`);
+  if (!r.ok) throw new Error(`fetch ${name}: ${r.status}`);
+  const c = parse(await r.arrayBuffer());
+  const S = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC;
+  const arena = buf(dev, c.arena, S);
+  const part = mode === 'split' ? partitionRecords(c.pus) : { words: c.pus, smallCount: 0, generalCount: c.puCount };
+  const pus = buf(dev, part.words, GPUBufferUsage.STORAGE);
+  const wts = buf(dev, c.wts, GPUBufferUsage.STORAGE);
+  const curBytes = c.curSlot * c.slotWords * 4;
+  const dst = separateDst ? buf(dev, c.arena.subarray(c.curSlot * c.slotWords, (c.curSlot + 1) * c.slotWords), S) : null;
+  const mc = new GpuMc(dev, { separateDst, code: window.mcCodeOverride ?? null });
+  const msgs = await mc.compileInfo();
+  if (msgs.length) log(msgs.join('\n'));
+  if (msgs.some((m) => m.startsWith('error'))) throw new Error('WGSL compile error');
+  const bg = mc.bindGroup({ arena, pus, wts, dst });
+  const enc = dev.createCommandEncoder();
+  const pass = enc.beginComputePass();
+  mc.encode(pass, bg, {
+    width: c.width, height: c.height, bitDepthY: c.bdY, bitDepthC: c.bdC, slotWords: c.slotWords,
+    dstBase: separateDst ? 0 : c.curSlot * c.slotWords,
+    smallFirst: 0, smallCount: part.smallCount, puFirst: part.smallCount, puCount: part.generalCount,
+    u16Samples: (c.flags & 1) !== 0, scalarNarrowing: ((c.flags & 2) !== 0) !== q.has('flipNarrowing'),
+  });
+  pass.end();
+  dev.queue.submit([enc.finish()]);
+  const got = separateDst ? await readBack(dev, dst, 0, c.slotWords * 4) : await readBack(dev, arena, curBytes, c.slotWords * 4);
+  const res = compare(c, got);
+  // The reference slots must be untouched.
+  let refChanged = 0;
+  if (!separateDst) {
+    const all = await readBack(dev, arena, 0, c.curSlot * c.slotWords * 4);
+    for (let i = 0; i < all.length; i++) if (all[i] !== c.arena[i]) refChanged++;
+  }
+  [arena, pus, wts, dst].forEach((b) => b && b.destroy());
+  return { name, mode: (separateDst ? 'separateDst' : 'arena') + '/' + mode + (mode === 'split' ? ` (${part.smallCount} small)` : ''), width: c.width, height: c.height, bd: `${c.bdY}/${c.bdC}`,
+    pus: c.puCount, predictedSamples: c.predicted, comparedSamples: res.samples, mismatches: res.mismatches,
+    byPlane: res.byPlane, first: res.first, refWordsChanged: refChanged };
+}
+
+// ---- 4K timing: synthetic P/B picture (CTB quadtree, typical MV statistics), random reference content.
+function rng(seed) { let s = seed >>> 0; return () => { s = (s + 0x6d2b79f5) >>> 0; let t = s; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0); }; }
+
+function synthPus(W, H, split, biPct, seed, fracAll = true) {
+  const R = rng(seed);
+  const pct = (p) => R() % 100 < p;
+  const out = [];
+  const sizes = {};
+  const mv = () => {
+    // Small motion, every phase; a few long vectors.
+    const big = pct(5);
+    const r = big ? 4096 : 96;
+    const v = (R() % (2 * r + 1)) - r;
+    return fracAll ? v : v & ~3;
+  };
+  const stack = [];
+  for (let y = 0; y < H; y += 64) for (let x = 0; x < W; x += 64) stack.push([x, y, 64]);
+  stack.reverse();
+  while (stack.length) {
+    const [x0, y0, s] = stack.pop();
+    if (x0 >= W || y0 >= H) continue;
+    if (s > 8 && (x0 + s > W || y0 + s > H || pct(split[s]))) {
+      const h = s / 2;
+      stack.push([x0 + h, y0 + h, h], [x0, y0 + h, h], [x0 + h, y0, h], [x0, y0, h]);
+      continue;
+    }
+    const m = R() % 10;
+    let rects;
+    if (m < 6 || s === 8 && m >= 8) rects = [[x0, y0, s, s]];
+    else if (m < 7) rects = [[x0, y0, s, s / 2], [x0, y0 + s / 2, s, s / 2]];
+    else if (m < 8) rects = [[x0, y0, s / 2, s], [x0 + s / 2, y0, s / 2, s]];
+    else if (m < 9) rects = [[x0, y0, s, s / 4], [x0, y0 + s / 4, s, (3 * s) / 4]];
+    else rects = [[x0, y0, s / 4, s], [x0 + s / 4, y0, (3 * s) / 4, s]];
+    for (const [px, py, pw, ph] of rects) {
+      const bi = pw * ph > 32 && pct(biPct);
+      const flags = bi ? 3 : (pct(70) ? 1 : 2);
+      const m0 = [mv(), mv()], m1 = [mv(), mv()];
+      out.push(px | (py << 16), pw | (ph << 8) | (flags << 16), (R() % 2) | ((2 + (R() % 2)) << 16),
+        (m0[0] & 0xffff) | ((m0[1] & 0xffff) << 16), (m1[0] & 0xffff) | ((m1[1] & 0xffff) << 16), 0);
+      const k = `${pw}x${ph}`; sizes[k] = (sizes[k] || 0) + 1;
+    }
+  }
+  return { words: new Uint32Array(out), count: out.length / MC_RECORD_WORDS, sizes };
+}
+
+async function bench(dev, ts) {
+  const W = 3840, H = 2160, bd = 10;
+  const L = pictureLayout(W, H);
+  const slots = 5, cur = 4;
+  const arena = dev.createBuffer({ size: slots * L.words * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC });
+  const R = rng(9);
+  const chunk = new Uint32Array(1 << 20);
+  for (let o = 0; o < slots * L.words; o += chunk.length) {
+    const n = Math.min(chunk.length, slots * L.words - o);
+    for (let i = 0; i < n; i++) chunk[i] = R() & 0x03ff03ff;
+    dev.queue.writeBuffer(arena, o * 4, chunk, 0, n);
+  }
+  const wts = buf(dev, new Uint32Array(128), GPUBufferUsage.STORAGE);
+  const mc = new GpuMc(dev, { code: window.mcCodeOverride ?? null });
+  const N = 40;
+  const qs = ts ? dev.createQuerySet({ type: 'timestamp', count: 2 * N }) : null;
+  const qbuf = ts ? dev.createBuffer({ size: 16 * N, usage: GPUBufferUsage.QUERY_RESOLVE | GPUBufferUsage.COPY_SRC }) : null;
+  const variants = [
+    { label: 'B, about 5000 PUs, 60% bi', split: { 64: 15, 32: 12, 16: 10 }, bi: 60 },
+    { label: 'P, about 5000 PUs, uni', split: { 64: 15, 32: 12, 16: 10 }, bi: 0 },
+    { label: 'B, about 17000 PUs, 60% bi', split: { 64: 30, 32: 42, 16: 45 }, bi: 60 },
+    { label: 'dense B (small PUs, 60% bi)', split: { 64: 90, 32: 80, 16: 60 }, bi: 60 },
+    { label: 'static (64x64, integer MVs)', split: { 64: 0, 32: 0, 16: 0 }, bi: 0, intOnly: true },
+  ];
+  const stat = (a) => { const s = [...a].sort((x, y) => x - y); return { min: +s[0].toFixed(3), med: +s[s.length >> 1].toFixed(3) }; };
+  // Passes 0..n-1 of one or more submits, timestamped; returns per-pass GPU ms.
+  async function timed(bg, params, n, isolated) {
+    const out = [];
+    const wall = [];
+    const run = async (first, count) => {
+      const enc = dev.createCommandEncoder();
+      for (let i = 0; i < count; i++) {
+        const pass = enc.beginComputePass({ timestampWrites: { querySet: qs, beginningOfPassWriteIndex: 2 * (first + i), endOfPassWriteIndex: 2 * (first + i) + 1 } });
+        mc.encode(pass, bg, params);
+        pass.end();
+      }
+      const t0 = performance.now();
+      dev.queue.submit([enc.finish()]);
+      await dev.queue.onSubmittedWorkDone();
+      wall.push(performance.now() - t0);
+    };
+    if (isolated) { for (let i = 0; i < n; i++) await run(i, 1); } else await run(0, n);
+    const enc = dev.createCommandEncoder();
+    enc.resolveQuerySet(qs, 0, 2 * n, qbuf, 0);
+    const rb = dev.createBuffer({ size: 16 * n, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+    enc.copyBufferToBuffer(qbuf, 0, rb, 0, 16 * n);
+    dev.queue.submit([enc.finish()]);
+    await rb.mapAsync(GPUMapMode.READ);
+    const t = new BigUint64Array(rb.getMappedRange());
+    for (let i = 0; i < n; i++) out.push(Number(t[2 * i + 1] - t[2 * i]) / 1e6);
+    // First begin to last end over the passes: free of the per-timestamp quantization (about 65 us in Chrome).
+    const span = Number(t[2 * n - 1] - t[0]) / 1e6 / n;
+    rb.destroy();
+    return { gpu: out, wall, span };
+  }
+  const results = [];
+  for (const v of variants) {
+    const pu = synthPus(W, H, v.split, v.bi, 77, !v.intOnly);
+    const part = q.has('general') ? { words: pu.words, smallCount: 0, generalCount: pu.count } : partitionRecords(pu.words);
+    const pus = buf(dev, part.words, GPUBufferUsage.STORAGE);
+    const bg = mc.bindGroup({ arena, pus, wts });
+    const params = { width: W, height: H, bitDepthY: bd, bitDepthC: bd, slotWords: L.words, dstBase: cur * L.words,
+      smallFirst: 0, smallCount: part.smallCount, puFirst: part.smallCount, puCount: part.generalCount };
+    const r = { label: v.label, pus: pu.count, small: part.smallCount,
+      sizes: Object.entries(pu.sizes).sort((a, b) => b[1] - a[1]).slice(0, 8).map(([k, n]) => `${k}:${n}`).join(' ') };
+    if (ts) {
+      await timed(bg, params, 5, false); // warm up
+      const steady = await timed(bg, params, N, false);
+      const iso = await timed(bg, params, 15, true);
+      r.steadyMs = stat(steady.gpu);
+      r.steadySpanMs = +steady.span.toFixed(3);
+      r.isolatedMs = stat(iso.gpu);
+      r.isolatedWallMs = stat(iso.wall);
+    }
+    log(`bench ${r.label}: ${r.pus} PUs (${r.small} small), GPU back to back ${r.steadySpanMs} ms per picture (pass min ${r.steadyMs?.min} med ${r.steadyMs?.med}), isolated med ${r.isolatedMs?.med} ms (wall ${r.isolatedWallMs?.med}); ${r.sizes}`);
+    results.push(r);
+    pus.destroy();
+  }
+  arena.destroy();
+  return results;
+}
+
+(async () => {
+  if (q.get('exp')) window.mcCodeOverride = (await import(q.get('exp'))).default;
+  const out = { cases: [], totals: { comparedSamples: 0, predictedSamples: 0, mismatches: 0 }, bench: null, errors: [] };
+  window.mcResult = null;
+  try {
+    const { dev, ts } = await device();
+    if (!q.has('nocheck')) {
+      for (const n of names) {
+        for (const [sep, mode] of [[false, 'split'], [false, 'general'], [true, 'split']]) {
+          const r = await runCase(dev, n, sep, mode);
+          out.cases.push(r);
+          out.totals.comparedSamples += r.comparedSamples;
+          out.totals.predictedSamples += r.predictedSamples;
+          out.totals.mismatches += r.mismatches;
+          log(`${r.name} [${r.mode}] ${r.width}x${r.height} bd ${r.bd}: ${r.pus} PUs, ${r.predictedSamples} predicted / ${r.comparedSamples} compared samples, mismatches ${r.mismatches} (Y ${r.byPlane[0]}, Cb ${r.byPlane[1]}, Cr ${r.byPlane[2]})${r.refWordsChanged ? ', REF WORDS CHANGED ' + r.refWordsChanged : ''}${r.first.length ? ' first ' + JSON.stringify(r.first) : ''}`);
+        }
+      }
+      log(`TOTAL compared ${out.totals.comparedSamples}, predicted ${out.totals.predictedSamples}, mismatches ${out.totals.mismatches}`);
+    }
+    if (q.has('bench')) out.bench = await bench(dev, ts);
+  } catch (e) {
+    out.errors.push(String(e && e.stack || e));
+    log('ERROR ' + (e && e.stack || e));
+  }
+  window.mcResult = out;
+})();
+</script>
+</body>
+</html>

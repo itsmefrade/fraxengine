@@ -1,0 +1,13 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>FEL P5 test</title>
+<style>body{font:13px ui-monospace,monospace;margin:12px}pre{white-space:pre-wrap}</style>
+<h1>FEL Profile 5 test</h1>
+<pre id="log"></pre>
+<script type="module">
+import { runP5Test } from './p5-test.mjs';
+window.runP5Test = runP5Test;
+const q = new URLSearchParams(location.search);
+const post = body => fetch('/results', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body, (k, v) => (v === Infinity ? 'inf' : v)) });
+if (q.get('auto')) runP5Test().then(r => post({ name: q.get('name') ?? 'p5', result: r })).catch(e => post({ name: q.get('name') ?? 'p5', error: String(e.stack ?? e) }));
+</script>

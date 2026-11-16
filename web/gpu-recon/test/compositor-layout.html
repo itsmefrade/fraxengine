@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Compositor slot layout</title>
+<style>
+  :root { --bg: #fff; --fg: #111; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #111; --fg: #ddd; } }
+  body { background: var(--bg); color: var(--fg); font: 13px ui-monospace, monospace; margin: 16px; }
+  pre { white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<pre id="log">running...</pre>
+<script type="module">
+// FelCompositor reading GPU DPB slots of any size (strides aligned to 64 samples, conformance window) must give exactly what
+// the CPU plane path gives for the cropped planes. Real FEL pictures (local test media, full-fel-manifest frames: BL
+// 3840x2160, EL 1920x1080, their RPU tables) are cut to a picture rectangle; the cut planes go through the planes path, and the
+// same samples are placed into a slot of a two slot arena laid out like GpuRecon's (web/gpu-recon/mc.mjs pictureLayout, coded size
+// >= picture, picture at the crop origin, everything else random garbage) that goes through the GPU path. Compared bit for bit:
+// the composed buffer (raw16 and vdr, COMPOSE) and the rendered rgba16float target (DISPLAY), for FEL with both layers on the GPU,
+// mixed inputs, and single layer (DISPLAY reads the slot itself). A negative control (crop origin off by 2 samples) must differ.
+// The tight full frame case also checks the planes path against the gold hashes of the manifest.
+// Query: frames=0,1 (checkpoint indexes into the manifest, default the first 2). Result in window.result.
+import { FelCompositor } from '../../fel/fel-compositor.mjs';
+import { FelTables } from '../../fel/fel-tables.mjs';
+import { normalizeRpuDisplayMeta } from '../../fel/fel-meta.mjs';
+import { pictureLayout } from '../mc.mjs';
+
+const FX = '../../fel/fixtures/';
+const W = 3840, H = 2160, EW = 1920, EH = 1080;
+const q = new URLSearchParams(location.search);
+const logEl = document.getElementById('log');
+const lines = [];
+const log = (s) => { lines.push(s); logEl.textContent = lines.join('\n'); console.log(s); };
+const pad4 = n => String(n).padStart(4, '0');
+const fetchBytes = async url => { const r = await fetch(url); if (!r.ok) throw new Error(`${url}: HTTP ${r.status}`); return await r.arrayBuffer(); };
+const hex = buf => [...new Uint8Array(buf)].map(v => v.toString(16).padStart(2, '0')).join('');
+const sha256 = async a => hex(await crypto.subtle.digest('SHA-256', a));
+
+// Picture cases: BL rectangle [x0, y0, w, h] of the 3840x2160 frame, coded size and crop origin of its slot; EL the same for the
+// 1920x1080 enhancement frame. Coded sizes are multiples of 8 (MinCbSizeY) like real streams. Every cut plane holds an even number
+// of samples: the planes path uploads with writeBuffer (multiples of 4 bytes).
+const CASES = [
+  { name: 'tight 3840x2160', bl: { r: [0, 0, 3840, 2160], coded: [3840, 2160], at: [0, 0] }, el: { r: [0, 0, 1920, 1080], coded: [1920, 1080], at: [0, 0] } },
+  { name: 'scope 3840x1608 in 3840x1616', bl: { r: [0, 276, 3840, 1608], coded: [3840, 1616], at: [0, 4] }, el: { r: [0, 138, 1920, 804], coded: [1920, 808], at: [0, 2] } },
+  { name: '1920x1080 in 1920x1088', bl: { r: [960, 540, 1920, 1080], coded: [1920, 1088], at: [0, 0] }, el: { r: [480, 270, 960, 540], coded: [960, 544], at: [0, 0] } },
+  { name: 'odd 1916x1076 in 1928x1088', bl: { r: [100, 200, 1916, 1076], coded: [1928, 1088], at: [4, 6] }, el: { r: [50, 100, 958, 540], coded: [968, 544], at: [2, 2] } },
+];
+
+function rng(seed) { let s = seed >>> 0; return () => { s ^= s << 13; s >>>= 0; s ^= s >>> 17; s ^= s << 5; s >>>= 0; return s; }; }
+
+/** Tight cut planes of rectangle r from a full frame (yuv420 16-bit, fw x fh). */
+function cut(frame, fw, fh, [x0, y0, w, h]) {
+  const Y = new Uint16Array(w * h), U = new Uint16Array(w * h / 4), V = new Uint16Array(w * h / 4);
+  const fY = frame.subarray(0, fw * fh), fU = frame.subarray(fw * fh, fw * fh * 5 / 4), fV = frame.subarray(fw * fh * 5 / 4, fw * fh * 3 / 2);
+  for (let y = 0; y < h; y++) Y.set(fY.subarray((y0 + y) * fw + x0, (y0 + y) * fw + x0 + w), y * w);
+  const cw = w / 2, cfw = fw / 2;
+  for (let y = 0; y < h / 2; y++) {
+    const s = (y0 / 2 + y) * cfw + x0 / 2;
+    U.set(fU.subarray(s, s + cw), y * cw); V.set(fV.subarray(s, s + cw), y * cw);
+  }
+  return { Y, U, V };
+}
+
+/** A two slot arena laid out like GpuRecon; the picture goes into slot 1 at the crop origin, all else is garbage. */
+function slotArena(device, planes, w, h, [cwid, chei], [cx, cy], seed) {
+  const L = pictureLayout(cwid, chei);
+  const alignWords = Math.max(64, device.limits.minStorageBufferOffsetAlignment / 4);
+  const slotWords = Math.ceil(L.words / alignWords) * alignWords;
+  const s = new Uint16Array(slotWords * 2 * 2);
+  const r = rng(seed);
+  for (let i = 0; i < s.length; i++) s[i] = r() & 0xffff;
+  const base = slotWords * 2;   // slot 1, in samples
+  for (let y = 0; y < h; y++) s.set(planes.Y.subarray(y * w, (y + 1) * w), base + (cy + y) * L.strideY + cx);
+  const cw = w / 2;
+  for (let y = 0; y < h / 2; y++) {
+    s.set(planes.U.subarray(y * cw, (y + 1) * cw), base + L.offCb * 2 + (cy / 2 + y) * L.strideC + cx / 2);
+    s.set(planes.V.subarray(y * cw, (y + 1) * cw), base + L.offCr * 2 + (cy / 2 + y) * L.strideC + cx / 2);
+  }
+  const buffer = device.createBuffer({ label: 'test arena', size: s.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+  device.queue.writeBuffer(buffer, 0, s);
+  return { buffer, input: (dx = 0) => ({ gpu: { buffer, offset: slotWords * 4, size: slotWords * 4 }, width: w, height: h,
+    layout: { strideY: L.strideY, strideC: L.strideC, offU: L.offCb * 2, offV: L.offCr * 2, x: cx + dx, y: cy } }), L };
+}
+
+const eq = (a, b) => { if (a.length !== b.length) return false; for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false; return true; };
+const diffCount = (a, b) => { let n = 0; for (let i = 0; i < Math.min(a.length, b.length); i++) if (a[i] !== b[i]) n++; return n + Math.abs(a.length - b.length); };
+
+async function run() {
+  const adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
+  const need = ['maxStorageBufferBindingSize', 'maxBufferSize'];
+  const device = await adapter.requestDevice({ requiredLimits: Object.fromEntries(need.map(k => [k, Math.min(adapter.limits[k], 1 << 30)])) });
+  const gold = (await (await fetch(FX + 'full-fel-manifest-composition-gold.json')).json()).checkpoints;
+  const frames = (q.get('frames') ?? '0,1').split(',').map(Number).map(i => gold[i]);
+  const tables = await FelTables.create(new URL('../../wasm/aether_wasm.wasm', import.meta.url));
+  const res = { compares: 0, same: 0, diff: 0, negControls: 0, negDiffer: 0, gold: 0, goldMatch: 0, gpuInputs: 0, rows: [] };
+  for (const cp of frames) {
+    const i = cp.frameIndex;
+    const [blB, elB, nal, json] = await Promise.all([fetchBytes(`${FX}full-fel-manifest-frame-${pad4(i)}-bl.yuv`), fetchBytes(`${FX}full-fel-manifest-frame-${pad4(i)}-el.yuv`),
+      fetchBytes(`${FX}full-fel-manifest-checkpoint-${pad4(i)}-rpu.nal`), fetch(`${FX}full-fel-manifest-frame-${pad4(i)}-rpu.json`).then(r => r.json())]);
+    tables.reset();
+    const words = tables.tables(new Uint8Array(nal));
+    const meta = normalizeRpuDisplayMeta(json.vdr_dm_data);
+    const blFull = new Uint16Array(blB), elFull = new Uint16Array(elB);
+    for (const [ci, c] of CASES.entries()) {
+      const [, , w, h] = c.bl.r, [, , ew, eh] = c.el.r;
+      const target = device.createTexture({ size: [w, h], format: 'rgba16float', usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC });
+      const comp = await FelCompositor.create(device, null, { target, canvasMaxWidth: 3840 });
+      const blP = cut(blFull, W, H, c.bl.r), elP = cut(elFull, EW, EH, c.el.r);
+      const blA = slotArena(device, blP, w, h, c.bl.coded, c.bl.at, 1000 + ci), elA = slotArena(device, elP, ew, eh, c.el.coded, c.el.at, 2000 + ci);
+      const planes = (p, ww, hh) => ({ planes: p, width: ww, height: hh });
+      const shot = async (bl, el, t, info) => {
+        const r = comp.present(bl, el, t, t ? meta : null, info);
+        const composed = t ? await comp.readComposed() : null;
+        const tgt = await comp.readTarget(w, h);
+        return { r, composed, tgt };
+      };
+      const fel = { profile: 'p7' }, single = { profile: 'hdr10' };
+      const ref = await shot(planes(blP, w, h), planes(elP, ew, eh), words, fel);
+      if (c.bl.coded[0] === W && c.bl.coded[1] === H && !c.bl.at[0] && !c.bl.at[1]) {
+        res.gold++;
+        const ok = (await sha256(ref.composed.raw16)) === cp.raw16Sha256 && (await sha256(ref.composed.vdr)) === cp.vdr12Sha256;
+        if (ok) res.goldMatch++;
+        log(`frame ${i} planes path vs gold hashes: ${ok ? 'MATCH' : 'DIFF'}`);
+      }
+      const refSingle = await shot(planes(blP, w, h), null, null, single);
+      const modes = [
+        ['fel gpu+gpu', () => shot(blA.input(), elA.input(), words, fel), ref],
+        ['fel gpu+planes', () => shot(blA.input(), planes(elP, ew, eh), words, fel), ref],
+        ['fel planes+gpu', () => shot(planes(blP, w, h), elA.input(), words, fel), ref],
+        ['single gpu', () => shot(blA.input(), null, null, single), refSingle],
+      ];
+      for (const [mode, f, want] of modes) {
+        const got = await f();
+        if (got.r.input.includes('gpu')) res.gpuInputs++;
+        const cOk = !want.composed || (eq(got.composed.raw16, want.composed.raw16) && eq(got.composed.vdr, want.composed.vdr));
+        const tOk = eq(got.tgt.halfWords, want.tgt.halfWords);
+        const ok = cOk && tOk;
+        res.compares++; ok ? res.same++ : res.diff++;
+        const row = { frame: i, case: c.name, mode, input: got.r.input, composed: want.composed ? (cOk ? 'SAME' : `DIFF ${diffCount(got.composed.raw16, want.composed.raw16)}`) : '-', target: tOk ? 'SAME' : `DIFF ${diffCount(got.tgt.halfWords, want.tgt.halfWords)}` };
+        res.rows.push(row);
+        log(`frame ${i} ${c.name} ${mode} (${row.input}): composed ${row.composed}, target ${row.target}`);
+      }
+      // negative controls: the crop origin 2 samples off (when the slot has room to the left) must change the output
+      for (const [mode, f, want] of [['neg fel', () => shot(blA.input(c.bl.at[0] ? -2 : 2), elA.input(), words, fel), ref], ['neg single', () => shot(blA.input(c.bl.at[0] ? -2 : 2), null, null, single), refSingle]]) {
+        const got = await f();
+        const differs = !eq(got.tgt.halfWords, want.tgt.halfWords) || (want.composed && !eq(got.composed.raw16, want.composed.raw16));
+        res.negControls++; if (differs) res.negDiffer++;
+        log(`frame ${i} ${c.name} ${mode}: ${differs ? 'differs (expected)' : 'SAME (control failed)'}`);
+      }
+      comp.dispose(); target.destroy(); blA.buffer.destroy(); elA.buffer.destroy();
+    }
+  }
+  res.pass = res.diff === 0 && res.same === res.compares && res.negDiffer === res.negControls && res.goldMatch === res.gold && res.gpuInputs === res.compares;
+  log(`\n${res.pass ? 'PASS' : 'FAIL'}: ${res.same}/${res.compares} same, negative controls ${res.negDiffer}/${res.negControls} differ, gold ${res.goldMatch}/${res.gold}, GPU input used ${res.gpuInputs}/${res.compares}`);
+  device.destroy();
+  return res;
+}
+window.result = run().catch(e => { log('ERROR ' + (e.stack || e)); return { pass: false, error: String(e.stack || e) }; });
+</script>
+</body>
+</html>

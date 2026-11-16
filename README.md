@@ -1,0 +1,162 @@
+<h1 align="center">FraxEngine</h1>
+
+<p align="center">
+  <b>A media engine for the browser that plays Dolby Vision, HDR and lossless object audio in stock Chrome, with no plugin and no server-side transcoding.</b>
+</p>
+
+<p align="center">
+  <a href="https://github.com/itsmefrade/fraxengine/actions/workflows/ci.yml"><img alt="build" src="https://github.com/itsmefrade/fraxengine/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="https://github.com/itsmefrade/fraxengine/releases/latest"><img alt="release" src="https://img.shields.io/github/v/release/itsmefrade/fraxengine?label=release&color=blue&include_prereleases"></a>
+  <img alt="license" src="https://img.shields.io/badge/license-LGPL--3.0%20%2B%20App%20Store%20exception-lightgrey">
+  <img alt="platform" src="https://img.shields.io/badge/platform-Chrome%20on%20macOS-4285F4?logo=googlechrome&logoColor=white">
+  <img alt="rust" src="https://img.shields.io/badge/Rust-WebAssembly-B7410E?logo=rust&logoColor=white">
+</p>
+
+---
+
+## Origin
+
+FraxEngine is a browser port of [AetherEngine](https://github.com/superuser404notfound/AetherEngine) by Vincent Herbst,
+a media player engine for Apple platforms. The goal is the same; the stack is not: Rust compiled to WebAssembly,
+WebCodecs, Media Source and WebGPU instead of FFmpeg, VideoToolbox and AVPlayer. What came from where is in
+[NOTICE.md](NOTICE.md); what is different is in [CHANGES.md](CHANGES.md).
+
+Status: research-grade, version 0.1.0.
+
+## Measurements
+
+Every number below has a record in [measurements/](measurements/README.md), written to one
+[methodology](measurements/METHODOLOGY.md). MacBook Pro M4 Pro, macOS 27.2, Chrome 157, CPU in % of one core for the
+whole Chrome process tree, 30 s windows.
+
+| File | FraxEngine | Chrome `<video>` |
+| --- | --- | --- |
+| 1080p H.264 | 6.8 % | 11 to 15 % (range over all files) |
+| 4K HEVC HDR10 | 9.4 % | |
+| 4K HEVC HDR10, 90 Mbit/s | 13.7 % | |
+| VP9 | 10.0 to 10.3 % | 13.9 to 14.4 % |
+| Dolby Vision 8.1 (processed on the GPU) | 22 to 29 % | plays the HDR10 base layer only |
+| Dolby Vision 7 FEL (hardware, renderer only) | 7 to 10 % | cannot play it |
+
+- Dolby Vision 7 FEL on the hardware path is about 60 dB from the bit-exact result; an optional mode is bit-identical.
+- Memory is about 1.0 to 1.4 GB (RSS, whole Chrome tree), about 0.2 GB more than a plain `<video>`.
+- Profile 8.1 costs more because the picture goes through a WebGPU canvas; the analysis is in
+  [this record](measurements/records/dolby-vision-profile-8-1-canvas-cost.md).
+
+Comparison with native players and the method: [player engines on one Mac](measurements/records/comparison-player-engines-m4-pro.md).
+
+## Features
+
+### What it can do
+
+| Area | Supported |
+| --- | --- |
+| Containers | Matroska, MP4 / fMP4 / MOV, MPEG-TS / M2TS, raw audio (AC-3, E-AC-3, FLAC, DTS, TrueHD, WAV, ADTS) |
+| Video | H.264, HEVC, AV1, VP9 on the browser's decoders (hardware where available); VC-1 Advanced Profile in WebAssembly, bit exact with FFmpeg |
+| HDR | HDR10, HDR10+ (scene metadata applied), HLG |
+| Dolby Vision | Profile 5, 8.x, 7 MEL and 7 FEL, composed on the GPU from the RPU; optional bit-exact decode of either layer |
+| Audio | AAC, Opus, FLAC; AC-3, E-AC-3 with JOC (Atmos objects), TrueHD with Atmos objects, DTS core, DTS-HD MA / HRA, DTS:X, LPCM; rendered to the speaker layout or binaural for headphones |
+| Subtitles | PGS, ASS / SSA, SRT, WebVTT |
+| Sources | local files (read in slices) and HTTP(S) URLs with Range |
+| Extras | a reference player page and a small Jellyfin client |
+
+### What it cannot do
+
+- **No native Dolby Vision display mode.** The output is an HDR canvas; the display is not switched into Dolby Vision.
+- **No bitstream pass-through.** Atmos and DTS:X reach the speakers as decoded PCM, not as signalled objects to a receiver.
+- **No DTS-UHD**, VobSub, DASH or HLS manifests, disc structures (ISO / BD folders), DRM.
+- **Chrome on macOS is the tested target.** Safari works in part; other browsers and platforms are untested.
+- Real-time 4K FEL depends on the machine; bit-exact modes need several times the CPU of the default.
+
+## Installation
+
+Requirements: Rust with the `wasm32-unknown-unknown` target, Node.js 22, Python 3.
+
+```sh
+git clone https://github.com/itsmefrade/fraxengine.git
+cd fraxengine
+rustup target add wasm32-unknown-unknown
+sh scripts/build.sh          # builds every WebAssembly module into web/
+sh scripts/test.sh           # optional: cargo and node tests
+```
+
+Toolchain details and build outputs: [docs/build.md](docs/build.md).
+
+## Quick start
+
+Run the reference player locally:
+
+```sh
+python3 web/server.py --port 8790
+# open http://127.0.0.1:8790/player/index.html and pick a file, or add ?src=<url>
+```
+
+Embed the engine in your own page (served with the headers under Configuration):
+
+```js
+import { Session } from './player/js/session.js';
+
+const session = new Session({
+  url: 'https://media.example.org/movie.mkv',
+  host: document.getElementById('player'),   // the engine adds its <video> or <canvas> here
+  wantPlay: true,
+  onEvent: (ev) => {
+    if (ev.type === 'state') console.log('state', ev.state);
+    if (ev.type === 'error') console.error(ev.message);
+  },
+});
+await session.open();
+// session.pause(), session.play(), session.seek(timeUs), session.switchAudio(index), session.stop()
+```
+
+## Configuration
+
+**Required headers.** The page must be cross-origin isolated:
+
+| Header | Value |
+| --- | --- |
+| `Cross-Origin-Opener-Policy` | `same-origin` |
+| `Cross-Origin-Embedder-Policy` | `require-corp` or `credentialless` |
+
+A media server on another origin must allow CORS and Range: `Access-Control-Allow-Origin`,
+`Access-Control-Expose-Headers: Content-Range, Content-Length, Accept-Ranges`, and `206` answers to `Range`. Hosts
+that cannot set headers can use the bundled service worker. Details: [docs/deploy.md](docs/deploy.md).
+
+**Session options.** `url` or `file`, `host`, `onEvent`, `wantPlay`, `startUs`, `audioIndex`, `subtitle`,
+`headers` (extra request headers, so a token stays out of the URL), `size`, `requireRange`, and `quality`:
+
+| `quality` | Dolby Vision behaviour |
+| --- | --- |
+| `null` (auto) | Fast for Dolby Vision and HDR10+, native for other streams |
+| `native` | the base layer as HDR10 through the browser |
+| `fast` | both layers on the hardware decoder, composed on the GPU |
+| `high` | base layer decoded bit exact in WebAssembly |
+| `reference` | both layers bit exact |
+
+**Page parameters** for testing, read from the player page's URL: `?q=` (the quality above), `?mse=0` (never use the
+`<video>` route), `?dvbase=1` (Dolby Vision base layer through the `<video>` route), `?peak=<nits>` and
+`?sdrwhite=<nits>` (display assumptions), `?maxw=<px>` (cap the canvas width).
+
+**Environment variables** (build and tests only): `AETHER_LAB` (folder with local test media),
+`AETHER_RUST_TOOLCHAIN` (an isolated Rust toolchain), `AETHER_OFFLINE=1` (cargo without network).
+
+## Documentation
+
+| Page | Contents |
+| --- | --- |
+| [docs/architecture.md](docs/architecture.md) | workers, routes, the Dolby Vision pipeline, repository layout |
+| [docs/build.md](docs/build.md) | toolchain and build outputs |
+| [docs/testing.md](docs/testing.md) | test suites and local test media |
+| [docs/deploy.md](docs/deploy.md) | static deployment, headers, hosts |
+| [docs/jellyfin.md](docs/jellyfin.md) | the Jellyfin client |
+| [web/fel/README.md](web/fel/README.md) | the WebGPU Dolby Vision compositor |
+| [measurements/](measurements/README.md) | measurement records |
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). Security issues: [SECURITY.md](SECURITY.md).
+
+## License
+
+[LGPL-3.0 with the App Store / DRM exception](LICENSE), inherited from AetherEngine. Third-party code and its licences
+are listed in [NOTICE.md](NOTICE.md) and [web/LICENSES.md](web/LICENSES.md).

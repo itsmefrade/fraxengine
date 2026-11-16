@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FraxEngine for Jellyfin</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header id="bar" hidden>
+  <button id="home" class="link">FraxEngine</button>
+  <form id="searchform" role="search"><input id="search" type="search" placeholder="Search" autocomplete="off"></form>
+  <span id="who"></span>
+  <button id="switch" class="link">Servers</button>
+  <button id="logout">Log out</button>
+</header>
+
+<main>
+  <section id="login" class="view" hidden>
+    <form id="loginform" class="card">
+      <h1>FraxEngine for Jellyfin</h1>
+      <label>Server <input id="server" type="url" list="serverlist" required autocomplete="url"></label>
+      <datalist id="serverlist"></datalist>
+      <p id="serverinfo" class="muted"></p>
+      <label>Username <input id="username" list="userlist" required autocomplete="username"></label>
+      <datalist id="userlist"></datalist>
+      <label>Password <input id="password" type="password" autocomplete="current-password"></label>
+      <button type="submit" id="signin">Sign in</button>
+      <button type="button" id="quickconnect" class="link">Use Quick Connect</button>
+      <p id="qcstatus" class="muted" role="status"></p>
+      <p id="loginerror" class="error" role="alert"></p>
+      <div id="known"></div>
+    </form>
+  </section>
+
+  <section id="browse" class="view" hidden>
+    <h2 id="browsetitle"></h2>
+    <div id="crumbs"></div>
+    <div id="rows"></div>
+  </section>
+
+  <section id="detail" class="view" hidden>
+    <div class="detail">
+      <img id="dposter" alt="">
+      <div>
+        <h2 id="dtitle"></h2>
+        <p id="dmeta" class="muted"></p>
+        <p id="doverview"></p>
+        <div class="actions">
+          <button id="dresume" hidden></button>
+          <button id="dplay">Play</button>
+          <button id="dback" class="link">Back</button>
+        </div>
+        <p id="dinfo" class="muted"></p>
+      </div>
+    </div>
+  </section>
+
+  <section id="player" class="view" hidden>
+    <div id="stage"></div>
+    <div id="controls">
+      <button id="pback">Back</button>
+      <button id="pplay" disabled>Pause</button>
+      <input id="pseek" type="range" min="0" max="1000" value="0" disabled>
+      <span id="ptime">0:00 / 0:00</span>
+      <select id="psource" title="Source" hidden></select>
+      <select id="paudio" title="Audio" disabled></select>
+      <select id="psubs" title="Subtitles" disabled></select>
+    </div>
+    <p id="pstatus" class="muted"></p>
+  </section>
+</main>
+<p id="toast" class="error" role="alert" hidden></p>
+<script type="module" src="app.js"></script>
+</body>
+</html>

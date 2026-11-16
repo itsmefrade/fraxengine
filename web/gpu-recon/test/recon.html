@@ -1,0 +1,319 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GPU recon end to end</title>
+<style>
+  :root { --bg: #fff; --fg: #111; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #111; --fg: #ddd; } }
+  body { background: var(--bg); color: var(--fg); font: 13px ui-monospace, monospace; margin: 16px; }
+  pre { white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<pre id="log">running...</pre>
+<script type="module">
+// End to end test of recon.mjs (GpuRecon): G0's dumped streams (`reconstream dump`, FORMAT-STREAM.md) are fed picture
+// by picture, every final picture is read back and compared sample by sample with the decoder's post-SAO picture; on
+// a mismatch the picture is re-run stopped after reconstruction and after deblocking and compared with the
+// pre_deblock / post_deblock dumps to localise the stage. Then each picture is re-run `reps` times for GPU time
+// (timestamp queries around the pass) and the CPU time of decodePicture (JS + uploads + encoding).
+// A synthetic unit test covers what the dumps do not (PCM, the add-residual clip, both target paths).
+// Query: data=<base URL of the dumps> (default http://127.0.0.1:8795/), streams=a,b, reps=N, unit=0|1, stages=0|1, neg=0|1, slots=N (initial DPB slots; fewer exercise the arena growth),
+// schedule=list|ctu|wave, jssched=1 (build the intra schedule in JS even when the stream carries one).
+// Result in window.result.
+import { GpuRecon, requestReconDevice, streamEvents, EV } from '../recon.mjs';
+
+const q = new URLSearchParams(location.search);
+const DATA = q.get('data') ?? 'http://127.0.0.1:8795/';
+const STREAMS = (q.get('streams') ?? 'fel-p7-bl,p5,awaken,rangers-bl').split(',').filter(Boolean);
+const REPS = Number(q.get('reps') ?? 5);
+const UNIT = q.get('unit') !== '0';
+const NEG = q.get('neg') === '1'; // negative controls on the first inter picture of each stream
+const STAGES = q.get('stages') === '1'; // check the pre_deblock and post_deblock stages of every picture
+const logEl = document.getElementById('log');
+const lines = [];
+const log = (s) => { lines.push(s); logEl.textContent = lines.join('\n'); console.log(s); };
+const median = (a) => { const s = [...a].sort((x, y) => x - y); return s.length ? s[s.length >> 1] : NaN; };
+const r3 = (v) => Math.round(v * 1000) / 1000;
+
+// Compares a picture in the README layout (got, u32 words) with planar u16 planes without stride (exp).
+function compare(L, got, exp, w, h) {
+  const g16 = new Uint16Array(got.buffer, got.byteOffset, got.length * 2);
+  const planes = [[0, w, h, L.strideY], [L.offCb * 2, w >> 1, h >> 1, L.strideC], [L.offCr * 2, w >> 1, h >> 1, L.strideC]];
+  let at = 0, mism = 0, n = 0;
+  const per = [0, 0, 0], first = [];
+  planes.forEach(([base, pw, ph, stride], c) => {
+    for (let y = 0; y < ph; y++) {
+      const row = base + y * stride;
+      for (let x = 0; x < pw; x++, at++) {
+        n++;
+        if (g16[row + x] !== exp[at]) {
+          mism++; per[c]++;
+          if (first.length < 6) first.push({ c, x, y, got: g16[row + x], exp: exp[at] });
+        }
+      }
+    }
+  });
+  return { n, mism, per, first };
+}
+
+async function fetchU16(url) {
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(`${url}: ${r.status}`);
+  return new Uint16Array(await r.arrayBuffer());
+}
+
+// ---------- synthetic unit test ----------
+// A P picture of 128x64 10-bit (CTB 16) over a random reference slot: 8x8 and 16x16 uni PUs with integer MVs
+// (including MVs past the picture edge), PCM CUs, transquant bypass inter TUs (residual = coded level, so the add and
+// the clip are checked without a transform reference), no deblocking edges; once without SAO (reconstructed in the
+// slot) and once with band offset in every CTB (reconstructed in the work buffer, SAO into the slot).
+function rng(seed) { let s = seed >>> 0; return () => { s ^= s << 13; s >>>= 0; s ^= s >>> 17; s ^= s << 5; s >>>= 0; return s / 4294967296; }; }
+
+function synthStream(seed, sao) {
+  const W = 128, H = 64, BD = 10, MAX = (1 << BD) - 1, log2Ctb = 4, wC = W >> log2Ctb, hC = H >> log2Ctb;
+  const R = rng(seed);
+  const ri = (a, b) => a + Math.floor(R() * (b - a + 1));
+  const ref = [new Uint16Array(W * H), new Uint16Array((W / 2) * (H / 2)), new Uint16Array((W / 2) * (H / 2))];
+  ref.forEach((p) => { for (let i = 0; i < p.length; i++) p[i] = ri(0, MAX); });
+  const pred = ref.map((p) => new Uint16Array(p.length));
+  const pus = [], small = [], tus = [], coefs = [], pcm = [], pcmS = [];
+  const pcmCells = new Set(['2,1', '5,0', '7,3']);
+  for (let cy = 0; cy < hC; cy++) for (let cx = 0; cx < wC; cx++) {
+    const X = cx * 16, Y = cy * 16;
+    if (pcmCells.has(`${cx},${cy}`)) {
+      const log2 = cx === 5 ? 3 : 4, n = 1 << log2;
+      for (let oy = 0; oy < 16; oy += n) for (let ox = 0; ox < 16; ox += n) {
+        pcm.push([(X + ox) | ((Y + oy) << 16), log2, pcmS.length]);
+        const fill = (c, x0, y0, s) => { for (let j = 0; j < s; j++) for (let i = 0; i < s; i++) { const v = ri(0, MAX); pcmS.push(v); pred[c][(y0 + j) * (c ? W / 2 : W) + x0 + i] = v; } };
+        fill(0, X + ox, Y + oy, n); fill(1, (X + ox) >> 1, (Y + oy) >> 1, n >> 1); fill(2, (X + ox) >> 1, (Y + oy) >> 1, n >> 1);
+      }
+      continue;
+    }
+    const parts = R() < 0.5 ? [[0, 0, 16]] : [[0, 0, 8], [8, 0, 8], [0, 8, 8], [8, 8, 8]];
+    for (const [ox, oy, s] of parts) {
+      const mvx = ri(-12, 12) * 8 + (R() < 0.1 ? -400 : 0), mvy = ri(-12, 12) * 8; // whole chroma samples too
+      const rec = [(X + ox) | ((Y + oy) << 16), s | (s << 8) | (1 << 16), 0, ((mvx & 0xffff) | ((mvy & 0xffff) << 16)) >>> 0, 0, 0];
+      (s <= 8 ? small : pus).push(rec);
+      for (let c = 0; c < 3; c++) {
+        const sh = c ? 1 : 0, pw = W >> sh, ph = H >> sh, x0 = (X + ox) >> sh, y0 = (Y + oy) >> sh, n = s >> sh;
+        const dx = (mvx >> 2) >> sh, dy = (mvy >> 2) >> sh;
+        for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) {
+          const sx = Math.min(Math.max(x0 + i + dx, 0), pw - 1), sy = Math.min(Math.max(y0 + j + dy, 0), ph - 1);
+          pred[c][(y0 + j) * pw + x0 + i] = ref[c][sy * pw + sx];
+        }
+      }
+    }
+    // Bypass TUs over the CU: luma 16x16 or four 8x8, chroma 8x8 or four 4x4.
+    const tl = R() < 0.5 ? 4 : 3;
+    for (const c of [0, 1, 2]) {
+      const log2 = c ? tl - 1 : tl, n = 1 << log2, sh = c ? 1 : 0;
+      for (let oy = 0; oy < 16 >> sh; oy += n) for (let ox = 0; ox < 16 >> sh; ox += n) {
+        if (R() < 0.2) continue;
+        const coefOffset = coefs.length;
+        const res = new Int32Array(n * n);
+        for (let k = 0; k < n * n; k++) {
+          const v = R() < 0.3 ? 0 : R() < 0.1 ? (R() < 0.5 ? -32768 : 32767) : ri(-700, 700);
+          if (v) { coefs.push(((k & 1023) | ((v & 0xffff) << 16)) >>> 0); res[k] = v; }
+        }
+        if (coefs.length === coefOffset) { coefs.push(0 | (5 << 16)); res[0] = 5; }
+        tus.push({ x: (X >> sh) + ox, y: (Y >> sh) + oy, log2, c, coefOffset, num: coefs.length - coefOffset, res });
+      }
+    }
+  }
+  // Expected picture: prediction, + residual clipped, then SAO band offset.
+  const exp = pred.map((p) => p.slice());
+  for (const t of tus) {
+    const pw = t.c ? W / 2 : W, n = 1 << t.log2;
+    for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) {
+      const at = (t.y + j) * pw + t.x + i;
+      exp[t.c][at] = Math.min(Math.max(exp[t.c][at] + t.res[j * n + i], 0), MAX);
+    }
+  }
+  const saoRecs = new Uint32Array(wC * hC * 4);
+  const band = [];
+  for (let i = 0; i < wC * hC; i++) {
+    const pos = sao ? ri(0, 31) : 0, offs = [ri(-31, 31), ri(-31, 31), ri(-31, 31), ri(-31, 31)];
+    band.push({ pos, offs });
+    const t = sao ? 1 : 0;
+    saoRecs[i * 4] = (0x1ff | (t << 9) | (t << 11) | (t << 13) | (pos << 15) | (pos << 20) | (pos << 25)) >>> 0;
+    const packed = (offs[0] & 0xff) | ((offs[1] & 0xff) << 8) | ((offs[2] & 0xff) << 16) | ((offs[3] & 0xff) << 24);
+    saoRecs[i * 4 + 1] = saoRecs[i * 4 + 2] = saoRecs[i * 4 + 3] = packed >>> 0;
+  }
+  if (sao) {
+    exp.forEach((p, c) => {
+      const pw = c ? W / 2 : W, ctb = c ? 8 : 16;
+      for (let i = 0; i < p.length; i++) {
+        const x = i % pw, y = (i / pw) | 0, b = band[((y / ctb) | 0) * wC + ((x / ctb) | 0)];
+        const k = ((p[i] >> (BD - 5)) - b.pos) & 31;
+        if (k < 4) p[i] = Math.min(Math.max(p[i] + b.offs[k], 0), MAX);
+      }
+    });
+  }
+  // Pack the 13-section payload.
+  let res = 0;
+  const tuW = [];
+  for (const t of tus) {
+    tuW.push(t.x | (t.y << 16), (t.log2 - 2) | (t.c << 2) | (1 << 6) | ((BD - 8) << 8) | (31 << 11) | (40 << 16), t.coefOffset, t.num, res, 0xffffffff);
+    res += 1 << (2 * t.log2);
+  }
+  const puW = [...small, ...pus].flat();
+  const pcmW = pcm.flat();
+  const pcmSW = [];
+  for (let i = 0; i < pcmS.length; i += 2) pcmSW.push((pcmS[i] | ((pcmS[i + 1] ?? 0) << 16)) >>> 0);
+  const blockMap = new Uint32Array((W / 8) * (H / 8)); // bS 0 everywhere: deblocking leaves the picture
+  const dbCtb = new Uint32Array(wC * hC);
+  const sections = [
+    [tuW, tus.length], [coefs, coefs.length], [puW, small.length + pus.length], [[], 0], [[], 0], [pcmW, pcm.length],
+    [pcmSW, pcmS.length], [blockMap, blockMap.length], [dbCtb, dbCtb.length], [saoRecs, wC * hC], [[], 0], [[], 0], [[], 0],
+  ];
+  const head = new Uint32Array(24);
+  head.set([0, 1, 1, W, H, BD | (BD << 8) | (1 << 16), log2Ctb | (3 << 8) | (2 << 16), (sao ? 1 : 0) | 8, 0, 0, 0, 0, 0, 0, 0, wC, hC, W / 8, W / 4, small.length]);
+  const out = [...head, ...new Array(26).fill(0)];
+  sections.forEach(([words, count], i) => { out[24 + 2 * i] = out.length; out[24 + 2 * i + 1] = count; out.push(...words); });
+  return { payload: new Uint32Array(out), ref, exp, W, H, BD, counts: { pus: puW.length / 6, tus: tus.length, pcm: pcm.length } };
+}
+
+async function unitTests(device) {
+  const out = [];
+  for (const [seed, sao] of [[1, false], [2, true], [3, false], [4, true]]) {
+    const recon = new GpuRecon(device, { slots: 2 });
+    const s = synthStream(seed, sao);
+    const pic = { width: s.W, height: s.H, bitDepthY: s.BD, bitDepthC: s.BD };
+    recon.uploadPicture(0, pic, s.ref);
+    const r = recon.decodePicture(s.payload);
+    const L = recon.layout;
+    const got = await recon.read(recon.slotResource(1));
+    const cmp = compare(L, got, new Uint16Array([...s.exp[0], ...s.exp[1], ...s.exp[2]]), s.W, s.H);
+    const refBack = await recon.read(recon.slotResource(0));
+    const refCmp = compare(L, refBack, new Uint16Array([...s.ref[0], ...s.ref[1], ...s.ref[2]]), s.W, s.H);
+    out.push({ seed, sao, verdict: r.verdict, useSao: r.useSao, ...s.counts, samples: cmp.n, mismatches: cmp.mism, refChanged: refCmp.mism, first: cmp.first });
+    recon.destroy();
+  }
+  // Unsupported pictures go to the CPU: flag bit 31, 4:2:2, a reference slot that holds nothing.
+  const recon = new GpuRecon(device, { slots: 2 });
+  const s = synthStream(5, false);
+  const verdicts = [];
+  const flip = (f) => { const p = s.payload.slice(); f(p); return recon.decodePicture(p); };
+  verdicts.push(flip((p) => { p[7] |= 0x80000000; }).verdict);
+  verdicts.push(flip((p) => { p[5] = (p[5] & 0xffff) | (2 << 16); }).verdict);
+  verdicts.push(recon.decodePicture(s.payload).verdict); // slot 0 never written
+  recon.destroy();
+  return { cases: out, cpuVerdicts: verdicts, ok: out.every((c) => c.mismatches === 0 && c.refChanged === 0 && c.verdict === 'gpu') && verdicts.every((v) => v === 'cpu') };
+}
+
+// ---------- G0's dumps ----------
+async function runStream(device, name) {
+  const words = new Uint32Array(await (await fetch(`${DATA}${name}/stream.rcs`)).arrayBuffer());
+  // index.json of the first dumps writes ref_slots as a set ({0, 1}), not JSON: read it as a list.
+  const index = JSON.parse((await (await fetch(`${DATA}${name}/index.json`)).text()).replace(/"ref_slots":\{([^}]*)\}/g, '"ref_slots":[$1]'));
+  const stageOf = new Map(index.filter((e) => e.event === 'picture').map((e) => [e.pic_id, e.stages]));
+  const recon = new GpuRecon(device, { slots: Number(q.get('slots') ?? 8), schedule: q.get('schedule') ?? 'list', streamSchedule: q.get('jssched') !== '1' });
+  const pics = [];
+  let negDone = false;
+  const events = [...streamEvents(words)];
+  for (const ev of events) {
+    if (ev.type !== EV.PICTURE) { recon.event(ev.type, ev.payload); continue; }
+    const r = recon.decodePicture(ev.payload);
+    const rec = { picId: r.picId, slot: r.slot, poc: r.poc, kind: r.kind, verdict: r.verdict, reason: r.reason, legacy: r.legacy, useSao: r.useSao, streamSchedule: r.streamSchedule, counts: r.counts };
+    pics.push(rec);
+    if (r.verdict !== 'gpu') continue;
+    const stage = stageOf.get(r.picId);
+    if (!stage) continue;
+    const { width: w, height: h } = r.pic;
+    const got = await recon.read(recon.slotResource(r.slot));
+    const cmp = compare(recon.layout, got, await fetchU16(`${DATA}${name}/${stage}.post_sao.u16`), w, h);
+    Object.assign(rec, { samples: cmp.n, mismatches: cmp.mism, perPlane: cmp.per, first: cmp.first });
+    if (cmp.mism || STAGES) {
+      // Localise: reconstruction (pre_deblock), deblocking (post_deblock), then redo the picture fully. `vsFinal`
+      // compares the same partial picture with the final one: the samples the remaining stages change, i.e. what a
+      // dropped stage would cost (a check that the comparison sees them).
+      const loc = {};
+      const fin = await fetchU16(`${DATA}${name}/${stage}.post_sao.u16`);
+      for (const [stop, file] of [['recon', 'pre_deblock'], ['deblock', 'post_deblock']]) {
+        const rr = recon.decodePicture(ev.payload, { stopAfter: stop });
+        const part = await recon.read(rr.target);
+        const c = compare(recon.layout, part, await fetchU16(`${DATA}${name}/${stage}.${file}.u16`), w, h);
+        loc[file] = { mismatches: c.mism, perPlane: c.per, first: c.first, vsFinal: compare(recon.layout, part, fin, w, h).mism };
+      }
+      recon.decodePicture(ev.payload);
+      rec.localise = loc;
+    }
+    if (NEG && r.kind !== 'I' && !negDone) {
+      // Negative controls on the first inter picture (payload edits, then the picture is redone from the original):
+      // inter residuals not added (TU word 5 set to an intra owner), motion vectors zeroed. Both must mismatch.
+      negDone = true;
+      const sec = (i) => [ev.payload[24 + 2 * i], ev.payload[25 + 2 * i]];
+      const edits = {
+        noInterResidual: (p) => { const [o, n] = sec(0); for (let i = 0; i < n; i++) if (p[o + i * 6 + 5] === 0xffffffff) p[o + i * 6 + 5] = 0; },
+        zeroMvs: (p) => { const [o, n] = sec(2); for (let i = 0; i < n; i++) { p[o + i * 6 + 3] = 0; p[o + i * 6 + 4] = 0; } },
+      };
+      rec.negative = {};
+      for (const [k, f] of Object.entries(edits)) {
+        const pl = ev.payload.slice();
+        f(pl);
+        const rr = recon.decodePicture(pl);
+        rec.negative[k] = compare(recon.layout, await recon.read(recon.slotResource(rr.slot)), await fetchU16(`${DATA}${name}/${stage}.post_sao.u16`), w, h).mism;
+      }
+      recon.decodePicture(ev.payload);
+      const again = compare(recon.layout, await recon.read(recon.slotResource(r.slot)), await fetchU16(`${DATA}${name}/${stage}.post_sao.u16`), w, h).mism;
+      log(`${name} pic ${r.picId} negative controls ${JSON.stringify(rec.negative)}, redone: ${again} mismatches`);
+      rec.mismatches += again;
+    }
+    log(`${name} pic ${r.picId} ${r.kind} slot ${r.slot} ${r.useSao ? 'sao' : 'no-sao'}${r.legacy ? ' legacy' : ''}: ${cmp.mism} mismatches / ${cmp.n}` + (rec.localise ? ' ' + JSON.stringify(rec.localise) : ''));
+  }
+  // Timing: re-run every picture (its references are unchanged, so the result is the same picture).
+  for (const ev of events) {
+    if (ev.type !== EV.PICTURE) continue;
+    const rec = pics.find((p) => p.picId === ev.payload[0]);
+    if (rec.verdict !== 'gpu') continue;
+    const gpu = [], cpu = [], parts = [];
+    for (let i = 0; i < REPS + 1; i++) {
+      const r = recon.decodePicture(ev.payload);
+      const g = await r.gpuMs;
+      await device.queue.onSubmittedWorkDone();
+      if (i === 0) continue; // first run warms the schedule buffers
+      if (g !== undefined) gpu.push(g);
+      cpu.push(r.cpu.totalMs);
+      parts.push(r.cpu);
+    }
+    if (!parts.length) continue;
+    rec.gpuMs = r3(median(gpu));
+    rec.cpuMs = r3(median(cpu));
+    rec.cpuParts = Object.fromEntries(Object.keys(parts[0]).map((k) => [k, r3(median(parts.map((p) => p[k])))]));
+  }
+  recon.destroy();
+  return pics;
+}
+
+const result = { done: false };
+window.result = result;
+try {
+  const device = await requestReconDevice(null, { timestamps: true });
+  device.addEventListener('uncapturederror', (e) => log('GPU error: ' + e.error.message));
+  result.timestamps = device.features.has('timestamp-query');
+  if (UNIT) {
+    result.unit = await unitTests(device);
+    log('unit: ' + JSON.stringify(result.unit));
+  }
+  result.streams = {};
+  for (const s of STREAMS) {
+    result.streams[s] = await runStream(device, s);
+    for (const p of result.streams[s]) log(`${s} ${p.picId} ${p.kind} ${p.verdict} mism=${p.mismatches} gpu=${p.gpuMs}ms cpu=${p.cpuMs}ms ${JSON.stringify(p.cpuParts)}`);
+  }
+  const all = Object.values(result.streams).flat().filter((p) => p.samples);
+  result.pictures = all.length;
+  result.samples = all.reduce((a, p) => a + p.samples, 0);
+  result.mismatches = all.reduce((a, p) => a + p.mismatches, 0);
+  result.ok = (!UNIT || result.unit.ok) && result.mismatches === 0;
+  log(`TOTAL ${result.pictures} pictures, ${result.samples} samples, ${result.mismatches} mismatches, ok=${result.ok}`);
+} catch (e) {
+  result.error = String(e.stack ?? e);
+  log('ERROR ' + result.error);
+}
+result.done = true;
+</script>
+</body>
+</html>
