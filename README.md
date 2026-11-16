@@ -23,6 +23,11 @@ WebCodecs, Media Source and WebGPU instead of FFmpeg, VideoToolbox and AVPlayer.
 
 Status: research-grade, version 0.1.0.
 
+**Broad objective.** Deliver high-end formats such as Dolby Vision, HDR and DTS in Chrome and Safari, as far as the
+hardware of macOS, iOS, Windows and other platforms supports them. Playback should be smooth, without lossy
+translation, and use as little CPU and RAM as possible. Today the engine is measured on Chrome for macOS only; the
+other browsers and platforms are the target, not the current state.
+
 ## Measurements
 
 Every number below has a record in [measurements/](measurements/README.md), written to one
