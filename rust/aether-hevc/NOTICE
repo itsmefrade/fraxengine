@@ -6,9 +6,8 @@ required to stay bit-identical to the upstream commit and to FFmpeg.
 The session wrapper in src/session.rs and src/session_abi.rs derives from an earlier prototype
 (hevc-rust) that was written in this project; the wrapper therefore
 has the project license (LGPL-3.0-only with the Apple Store / DRM exception, see the root LICENSE).
-Recorded by the maintainers' tooling; the owner is asked to confirm in web/LICENSES.md.
+Confirmed by the project owner.
 Vendored rust_h265 (vendor/rust_h265): Cargo.toml license "MIT OR Apache-2.0"; LICENSE-MIT is the MIT
 License, "Copyright (c) 2025 roticv"; LICENSE-APACHE is the Apache License 2.0 text.
 Upstream: https://github.com/roticv/rust_h265 at f582ce89d110491b159a093c82a27400a0ce08e0.
-Note: aether-hevc/Cargo.toml still says "MIT OR Apache-2.0" for the crate as a whole, which does not
-match the wrapper's origin above (see the Owner decisions section in web/LICENSES.md).
+The crate as a whole is "LGPL-3.0-only AND (MIT OR Apache-2.0)" (its Cargo.toml).

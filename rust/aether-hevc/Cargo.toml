@@ -5,7 +5,7 @@ name = "aether-hevc"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.88"
-license = "MIT OR Apache-2.0"
+license = "LGPL-3.0-only AND (MIT OR Apache-2.0)"
 publish = false
 description = "Bit-exact HEVC Main/Main10 session decoder for WASM workers, optimized fork of rust_h265 f582ce89"
 

@@ -160,3 +160,8 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). Security issues: [SECURITY.md](SECURITY.
 
 [LGPL-3.0 with the App Store / DRM exception](LICENSE), inherited from AetherEngine. Third-party code and its licences
 are listed in [NOTICE.md](NOTICE.md) and [web/LICENSES.md](web/LICENSES.md).
+
+**Patents and trademarks.** The licences cover copyright only. HEVC, VC-1, AC-3, E-AC-3, DTS, TrueHD and Dolby Vision
+may be covered by patents; this project grants no patent licence, and anyone who ships it is responsible for the
+licences their use needs. Dolby, Dolby Vision, Dolby Atmos, DTS and the other format names are trademarks of their
+owners. FraxEngine is not affiliated with or endorsed by them.

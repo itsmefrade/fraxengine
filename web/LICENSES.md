@@ -26,7 +26,7 @@ browser vendor's licence terms except through those APIs.
 | --- | --- | --- |
 | Repository root `LICENSE` | LGPL-3.0 plus the "Apple Store / DRM exception" | Copyright (C) 2026 Vincent Herbst. The exception is about app stores and does not matter for a website. |
 | `aether-demux`, `aether-dovi`, `aether-player`, `aether-subs`, `aether-audio`, `aether-wasm` (and the `aether-core` shim) | `LGPL-3.0-only` (Cargo.toml) | Consistent with the root licence. |
-| JavaScript under `web/` (engine, fel, exact, subs, player/js) | `LGPL-3.0-only` via `// SPDX-License-Identifier: LGPL-3.0-only` on line 1 | Chosen to match the root `LICENSE` and the Cargo manifests of our crates. **Owner to confirm** (see Owner decisions needed). |
+| JavaScript under `web/` (engine, fel, exact, subs, player/js) | `LGPL-3.0-only` via `// SPDX-License-Identifier: LGPL-3.0-only` on line 1 | Matches the root `LICENSE` and the Cargo manifests of our crates. Confirmed by the project owner. |
 
 ## Derived from FFmpeg (LGPL-2.1-or-later)
 
@@ -46,7 +46,7 @@ browser vendor's licence terms except through those APIs.
 
 | Component | Licence | Notes |
 | --- | --- | --- |
-| `aether-hevc` 0.1.0 (cdylib to `aether_hevc_simd.wasm`) | `MIT OR Apache-2.0` (its Cargo.toml) | Optimised fork of rust_h265 f582ce89. Its session wrapper (`src/session.rs`, `src/session_abi.rs`) derives from an earlier prototype (hevc-rust) written in this project (recorded in `rust/aether-hevc/NOTICE`), so the wrapper has the project licence (LGPL-3.0-only). **Owner to confirm**: the crate's Cargo.toml still says `MIT OR Apache-2.0`. |
+| `aether-hevc` 0.1.0 (cdylib to `aether_hevc_simd.wasm`) | `LGPL-3.0-only AND (MIT OR Apache-2.0)` (its Cargo.toml) | Optimised fork of rust_h265 f582ce89. The session wrapper (`src/session.rs`, `src/session_abi.rs`) derives from an earlier prototype (hevc-rust) written in this project (recorded in `rust/aether-hevc/NOTICE`) and has the project licence, `LGPL-3.0-only`. The vendored rust_h265 code keeps its own `MIT OR Apache-2.0`. |
 | `rust_h265` 0.4.1 | `MIT OR Apache-2.0` | https://github.com/roticv/rust_h265, vendored in `rust/aether-hevc/vendor/rust_h265` with modifications (SIMD paths, allocation removal). Licence texts: `LICENSE-MIT`, `LICENSE-APACHE`. **FLAG**: upstream's own provenance (whether it is an independent implementation or derived from another decoder) was not audited here. |
 
 ## Third-party crates linked into aether_wasm.wasm
@@ -110,16 +110,23 @@ build meets it (an engineering reading, not legal advice):
    `manifest.json` hashes are for cache and integrity checking only.
 5. **If you modify** an LGPL part and host it, you must offer your modified source the same way.
 
-## Owner decisions needed
+## Known open risks
 
-Open questions, recorded and not resolved here:
+Not resolved by this repository. Nobody here is a lawyer; this is an engineering record, not legal advice.
 
 1. **ETSI table redistribution.** Whether ETSI's terms allow redistributing the normative tables (Huffman codes A.1, QMF
-   prototype filter, from ETSI TS 103 420) inside an LGPL work (`aether-joc`).
-2. **Codec patents.** HEVC, VC-1, AC-3, E-AC-3, DTS, TrueHD and Dolby Vision patent pools or licensors; separate from copyright.
-3. **LGPL-3 Installation Information for web apps.** Whether a browser app counts as a "User Product" under section 4.
-4. **Project licence of our JavaScript.** `LGPL-3.0-only` was chosen from the root `LICENSE`; confirm.
-5. **Licence of `aether-hevc` as a whole.** Cargo.toml says `MIT OR Apache-2.0`; the session wrapper originates in this project.
+   prototype filter, from ETSI TS 103 420) inside an LGPL work (`aether-joc`). Unknown.
+2. **Codec patents.** HEVC, VC-1, AC-3, E-AC-3, DTS, TrueHD and Dolby Vision are covered by patent pools or licensors,
+   separately from copyright. The source licences above grant no patent rights for these formats. Anyone who ships a
+   build is responsible for any patent licences their use needs.
+
+## Resolved
+
+- **LGPL-3 Installation Information for web apps.** The site is plain static files with no signing and no lock against
+  modified code, so replacement stays open whether or not a browser app counts as a "User Product".
+- **Licence of our JavaScript.** `LGPL-3.0-only`, as in each file's SPDX line.
+- **Licence of `aether-hevc`.** `LGPL-3.0-only AND (MIT OR Apache-2.0)`: the wrapper is LGPL-3.0-only, the vendored
+  rust_h265 code stays MIT OR Apache-2.0.
 
 ## Checking the inventory
 
