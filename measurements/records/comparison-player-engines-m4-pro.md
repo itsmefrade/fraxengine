@@ -6,7 +6,7 @@
 | Group | Playback performance |
 | Type | Performance |
 | Section | FraxEngine against native players and other browser paths |
-| Environment | MacBook Pro 14", Apple M4 Pro (Mac16,8), 12 cores (8 performance, 4 efficiency), macOS 27.2, Chrome 157.0.8103.51, built-in display, FraxEngine `abbc45f`; the machine was in normal use (other apps open) |
+| Environment | MacBook Pro 14", Apple M4 Pro (Mac16,8), 12 cores (8 performance, 4 efficiency), macOS 27.2, Chrome 157.0.8103.51, built-in display, FraxEngine pre-release build `abbc45f` (private history). `v0.1.0` was cut from it: same Rust and JavaScript code apart from the project rename, comments and test-file paths; the WebAssembly was rebuilt and is not byte-identical. See [Builds measured](../README.md#builds-measured); the machine was in normal use (other apps open) |
 | Status | Current |
 
 ## Purpose
@@ -25,6 +25,8 @@ the same files, the same window size and the same protocol.
 | Margin of error | 2 repeats per cell. CPU swings of several points between identical runs are normal on this machine (see METHODOLOGY). No confidence interval was computed. |
 
 ## Results
+
+For FraxEngine against `<video>` alone, [comparison-video-element-5-repeats.md](comparison-video-element-5-repeats.md) (5 repeats, `v0.1.0`) supersedes the two-repeat numbers below.
 
 Median of the two repeats. CPU in % of one core.
 

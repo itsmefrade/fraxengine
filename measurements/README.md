@@ -19,6 +19,7 @@ Each file in [records/](records/) is one measurement, written as described in [M
 
 | Record | Type | Status | In one line |
 | --- | --- | --- | --- |
+| [Against `<video>`, five repeats](records/comparison-video-element-5-repeats.md) | Performance | Current | the README headline table: `v0.1.0`, 5 runs per cell, median and range |
 | [Player engines on one Mac](records/comparison-player-engines-m4-pro.md) | Performance | Current | FraxEngine against Chrome `<video>`, hls.js, AVPlayer, AetherEngine, KSPlayer, libmpv, VLCKit |
 | [Gap to a plain `<video>`](records/playback-gap-to-plain-video.md) | Performance | see record | 19 local samples and a shaped remote link |
 | [Element route, process cost](records/playback-element-route-process-cost.md) | Performance | Current | why a hidden helper element kept the tab loading, and the fix |
@@ -41,3 +42,11 @@ Each file in [records/](records/) is one measurement, written as described in [M
 | [WindowServer cost](records/hdr-windowserver-cost.md) | Performance | Current | the cost of 10-bit video in Chrome against AVPlayer, system processes included |
 | [`configure()` colour spaces](records/hdr-webgpu-canvas-configure.md) | Compatibility | see record | which canvas colour spaces Chrome accepts |
 | [Native output in Chrome](records/compatibility-native-output-gates.md) | Compatibility | Current | Chrome on macOS passes no Atmos, TrueHD, DTS or Dolby Vision through, so the engine decodes them |
+
+## Builds measured
+
+| Build | Public? | Relation to the public history |
+| --- | --- | --- |
+| `v0.1.0` (commit `1a14478`) | yes | the first public release |
+| `abbc45f` | no, private pre-release history | `v0.1.0` was cut from it. Same Rust and JavaScript code apart from the project rename, comments and test-file paths. The WebAssembly was rebuilt for `v0.1.0` and is not byte-identical. To reproduce a record that names `abbc45f`, use `v0.1.0`. |
+| Unknown | | older records whose build was not recorded say `Unknown` |

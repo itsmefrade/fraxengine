@@ -31,22 +31,25 @@ other browsers and platforms are the target, not the current state.
 ## Measurements
 
 Every number below has a record in [measurements/](measurements/README.md), written to one
-[methodology](measurements/METHODOLOGY.md). MacBook Pro M4 Pro, macOS 27.2, Chrome 157, CPU in % of one core for the
-whole Chrome process tree, 30 s windows.
+[methodology](measurements/METHODOLOGY.md). MacBook Pro M4 Pro, macOS 27.2, Chrome 157, FraxEngine `v0.1.0`. CPU in %
+of one core for the whole Chrome process tree, median of 5 runs with the lowest and highest run in brackets
+([record](measurements/records/comparison-video-element-5-repeats.md)).
 
 | File | FraxEngine | Chrome `<video>` |
 | --- | --- | --- |
-| 1080p H.264 | 6.8 % | 11 to 15 % (range over all files) |
-| 4K HEVC HDR10 | 9.4 % | |
-| 4K HEVC HDR10, 90 Mbit/s | 13.7 % | |
-| VP9 | 10.0 to 10.3 % | 13.9 to 14.4 % |
-| Dolby Vision 8.1 (processed on the GPU) | 22 to 29 % | plays the HDR10 base layer only |
-| Dolby Vision 7 FEL (hardware, renderer only) | 7 to 10 % | cannot play it |
+| 1080p H.264 | 9.1 % (8.2 to 9.4) | 12.2 % (10.3 to 12.6) |
+| 4K HEVC HDR10 | 12.4 % (9.3 to 12.8) | 14.8 % (11.1 to 15.2) |
+| 4K HEVC HDR10, 90 Mbit/s | 12.0 % (10.0 to 12.9) | 16.0 % (12.6 to 16.4) |
+| VP9 | 10.0 % (8.9 to 10.2) | 12.4 % (10.4 to 12.5) |
+| Dolby Vision 8.1, processed on the GPU (default) | 28.4 % (25.8 to 28.8) | 13.1 % (12.6 to 13.1), HDR10 base layer only |
+| Dolby Vision 8.1, base layer only (`?dvbase=1`) | 13.6 % (13.1 to 13.8) | same as above |
+| Dolby Vision 7 FEL (hardware, renderer only, [record](measurements/records/dolby-vision-profile-7-fel-cpu.md)) | 7 to 10 % | cannot play it |
 
+- On the 4K HDR10 file the two ranges overlap, so that gap is within the run-to-run spread.
 - Dolby Vision 7 FEL on the hardware path is about 60 dB from the bit-exact result; an optional mode is bit-identical.
-- Memory is about 1.0 to 1.4 GB (RSS, whole Chrome tree), about 0.2 GB more than a plain `<video>`.
-- Profile 8.1 costs more because the picture goes through a WebGPU canvas; the analysis is in
-  [this record](measurements/records/dolby-vision-profile-8-1-canvas-cost.md).
+- Memory is 1.0 to 1.45 GB (RSS, whole Chrome tree), 0.2 to 0.45 GB more than a plain `<video>`.
+- Profile 8.1 with processing costs about twice `<video>` because the picture goes through a WebGPU canvas; the
+  analysis is in [this record](measurements/records/dolby-vision-profile-8-1-canvas-cost.md).
 
 Comparison with native players and the method: [player engines on one Mac](measurements/records/comparison-player-engines-m4-pro.md).
 
@@ -139,7 +142,8 @@ that cannot set headers can use the bundled service worker. Details: [docs/deplo
 | `reference` | both layers bit exact |
 
 **Page parameters** for testing, read from the player page's URL: `?q=` (the quality above), `?mse=0` (never use the
-`<video>` route), `?dvbase=1` (Dolby Vision base layer through the `<video>` route), `?peak=<nits>` and
+`<video>` route), `?dvbase=1` (Dolby Vision base layer through the `<video>` route: lower CPU, a battery-saving option, but no Dolby
+Vision processing; the default keeps it), `?peak=<nits>` and
 `?sdrwhite=<nits>` (display assumptions), `?maxw=<px>` (cap the canvas width).
 
 **Environment variables** (build and tests only): `AETHER_LAB` (folder with local test media),

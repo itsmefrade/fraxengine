@@ -3,7 +3,7 @@
 #   sh web/dist-tools/build.sh [--skip-rust] [--no-source] [--no-verify] [--media FILE]
 # 1. sh rust/build.sh (workspace tests + aether_wasm.wasm; AETHER_RUST_TOOLCHAIN / AETHER_OFFLINE as there)
 #    --skip-rust (or AETHER_SKIP_RUST=1) uses the wasm already in web/wasm.
-# 2. web/exact/wasm/aether_hevc_simd.wasm is built from rust/aether-hevc when missing.
+# 2. The four web/exact/wasm/aether_hevc_simd*.wasm modules are built from rust/aether-hevc when missing.
 # 3. assemble.py: static import scan (fails on any unresolved import / worker URL), copy, manifest, size report.
 # 4. verify-dist.py --mode smoke: loads the built site in headless Chrome and fails on any 404 or load error.
 set -eu
@@ -34,12 +34,18 @@ if [ "$skip_rust" != 1 ]; then
   sh "$root/rust/build.sh"
 fi
 
-if [ ! -f "$web/exact/wasm/aether_hevc_simd.wasm" ]; then
-  echo "web/exact/wasm/aether_hevc_simd.wasm missing, building rust/aether-hevc"
-  sh "$root/rust/aether-hevc/build-wasm.sh"
-  mkdir -p "$web/exact/wasm"
-  cp "$root/rust/aether-hevc/dist/aether_hevc_simd.min.wasm" "$web/exact/wasm/aether_hevc_simd.wasm"
-fi
+# The four HEVC modules the player loads: build-wasm.sh flag, output name. Each is built only when missing.
+for variant in ":aether_hevc_simd" "--threads:aether_hevc_simd_mt" "--recon:aether_hevc_simd_recon" \
+               "--recon-threads:aether_hevc_simd_recon_mt"; do
+  flag=${variant%%:*}; name=${variant#*:}
+  if [ ! -f "$web/exact/wasm/$name.wasm" ]; then
+    echo "web/exact/wasm/$name.wasm missing, building rust/aether-hevc $flag"
+    # shellcheck disable=SC2086
+    sh "$root/rust/aether-hevc/build-wasm.sh" $flag
+    mkdir -p "$web/exact/wasm"
+    cp "$root/rust/aether-hevc/dist/$name.min.wasm" "$web/exact/wasm/$name.wasm"
+  fi
+done
 
 # shellcheck disable=SC2086
 python3 -I "$here/assemble.py" $src

@@ -5,6 +5,19 @@ All notable changes to FraxEngine are recorded here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- `web/dist-tools/build.sh` builds all four HEVC WebAssembly modules when they are missing; a clean checkout of
+  0.1.0 failed the static scan because three of them were never built.
+
+### Documentation
+
+- README headline table: 5 runs per cell against `v0.1.0`, with the `<video>` value per file
+  ([record](measurements/records/comparison-video-element-5-repeats.md)).
+- Records that cite the private pre-release commit `abbc45f` now say how it maps to `v0.1.0`.
+- Dolby Vision processing stays the Profile 8.1 default; `?dvbase=1` is documented as a battery-saving option.
+- Licence questions settled in `web/LICENSES.md`; patent and trademark note in README.
+
 ## [0.1.0]
 
 First public release. The development history before this release is not published; the state it reached:

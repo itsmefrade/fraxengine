@@ -6,7 +6,7 @@
 | Group | Playback behaviour |
 | Type | Behaviour |
 | Section | Hidden or occluded page |
-| Environment | MacBook Pro 14", Apple M4 Pro, macOS 27.2, Chrome 157.0.8103.51, FraxEngine `abbc45f` |
+| Environment | MacBook Pro 14", Apple M4 Pro, macOS 27.2, Chrome 157.0.8103.51, FraxEngine pre-release build `abbc45f` (private history). `v0.1.0` was cut from it: same Rust and JavaScript code apart from the project rename, comments and test-file paths; the WebAssembly was rebuilt and is not byte-identical. See [Builds measured](../README.md#builds-measured) |
 | Status | Current |
 
 ## Purpose

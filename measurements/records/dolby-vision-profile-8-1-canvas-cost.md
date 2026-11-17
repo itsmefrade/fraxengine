@@ -6,7 +6,7 @@
 | Group | Dolby Vision |
 | Type | Performance |
 | Section | Profile 8.1, canvas route |
-| Environment | MacBook Pro 14", Apple M4 Pro, macOS 27.2, Chrome 157.0.8103.51, window 1440x810 pt, FraxEngine `abbc45f` |
+| Environment | MacBook Pro 14", Apple M4 Pro, macOS 27.2, Chrome 157.0.8103.51, window 1440x810 pt, FraxEngine pre-release build `abbc45f` (private history). `v0.1.0` was cut from it: same Rust and JavaScript code apart from the project rename, comments and test-file paths; the WebAssembly was rebuilt and is not byte-identical. See [Builds measured](../README.md#builds-measured) |
 | Status | Current |
 
 ## Purpose
@@ -67,4 +67,6 @@ Dolby Vision 8.1 used about 28 % of a core against 9 to 14 % for HDR10 files on 
 
 ## Fixes
 
-None yet. Whether desktop Chrome should default to the base layer for Profile 8.1 (`dvbase`) is an open decision.
+None to the canvas cost yet. Decision on the default: Dolby Vision processing stays the default for Profile 8.1.
+The base layer alone is what a plain `<video>` already plays; the dynamic metadata, display management and trims are
+the part it cannot do. `?dvbase=1` stays available as a battery-saving option.
